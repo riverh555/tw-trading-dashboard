@@ -118,6 +118,7 @@ test('group ranking: low-volume outliers excluded, sqrt-turnover weighting, rank
   const sw = Math.sqrt(9e9), sc = Math.sqrt(5e8); assert.equal(C.score, Math.round((-4 * sw + 2 * sc) / (sw + 2 * sc) * 100) / 100);
   assert.ok(C.wavg < C.score, 'pure turnover weighting would be dominated by the heavyweight');
   assert.equal(C.breadth, 66.67); assert.equal(C.top, '7');
+  assert.deepEqual(r.find(g => g.id === 'd').members, ['99'], 'records keep the member list so a later group change can be detected');
   const moved = grouprank.compareRanks(r, { groups: [{ id: 'a', rank: 13 }, { id: 'b', rank: 1 }, { id: 'c', rank: 2 }] });
   assert.deepEqual(moved.map(g => g.move), [0, 11, -1, null]);
   const snap = grouprank.quotesFromSnapshot([{ stock_id: '2330', close: 110, change_price: 10, total_amount: 5e9, date: '2026-10-05 10:00:00.000' }, { stock_id: '0000', close: 0, change_price: 0 }], new Map([['2330', { name: '台積電' }]]));

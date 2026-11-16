@@ -928,6 +928,17 @@ function grPack(date,quotes,source){
   const scope=new Set(researchScope.groups.flatMap(g=>g.stockIds));
   return{date,source,asOf:times.at(-1)||null,builtAt:new Date().toISOString(),stocks:scope.size,quoted:[...scope].filter(id=>quotes.has(id)).length,rules:RANK_RULES,compare:prev?{date:prev.date}:null,groups:compareRanks(ranked,prev)};
 }
+// 研究族群改過（新增、刪除、改名或改成分股）後，收盤紀錄的族群與目前不同：以當日收盤資料依目前的族群重建並存檔。
+// 沒有足夠的收盤資料（時光機收盤畫格、快照、本機日成交都不到八成）時沿用原紀錄，並標示 stale
+// 比對族群代號、名稱與成分股（較早的紀錄沒有成分股清單，只比對檔數）
+const grKey=(groups,ids)=>JSON.stringify(groups.map(g=>[g.id,g.name,ids?[...g.ids].sort():g.ids.length]).sort((a,b)=>a[0].localeCompare(b[0])));
+const grStale=rec=>{if(!rec?.groups)return false;const ids=rec.groups.every(g=>Array.isArray(g.members));
+  return grKey(rec.groups.map(g=>({id:g.id,name:g.name,ids:ids?g.members:{length:g.stocks}})),ids)!==grKey(researchScope.groups.map(g=>({id:g.id,name:g.name,ids:g.stockIds})),ids);};
+function grRefresh(rec){
+  if(!rec?.groups||!rec.date||!grStale(rec))return rec;
+  const q=grCloseQuotes(rec.date);if(!q)return{...rec,stale:true};
+  const d=grPack(rec.date,q,'close');write(`grouprank-${rec.date}.json`,d);return d;
+}
 // 最新一個交易日的快照列（盤中監控 15 秒內的資料直接沿用）
 async function latestSnapRows(){
   if(lastSnap&&Date.now()-lastSnap.at<15000)return{date:lastSnap.date,rows:lastSnap.rows};
@@ -936,9 +947,9 @@ async function latestSnapRows(){
   return{date,rows:all.filter(r=>String(r.date).slice(0,10)===date)};
 }
 async function queryGroupRank(force=false){
-  if(!force&&grLive.data&&Date.now()-grLive.at<10000)return grLive.data;
+  if(!force&&grLive.data&&Date.now()-grLive.at<10000&&!grStale(grLive.data))return grLive.data;
   // 非盤中且已有當日收盤紀錄時直接沿用
-  if(!liveWindow()){const last=grDates().at(-1),rec=last?read(`grouprank-${last}.json`,null):null;if(rec&&rec.date>=(lastSnap?.date||today())){grLive={at:Date.now(),data:rec};return rec;}}
+  if(!liveWindow()){const last=grDates().at(-1),rec=last?grRefresh(read(`grouprank-${last}.json`,null)):null;if(rec&&rec.date>=(lastSnap?.date||today())){grLive={at:Date.now(),data:rec};return rec;}}
   const {date,rows}=await latestSnapRows();if(!rows.length)throw new UserError('目前取不到行情快照');
   const pack=grPack(date,quotesFromSnapshot(rows,grMeta()),date===today()&&liveWindow()?'live':'close');
   grLive={at:Date.now(),data:pack};return pack;
@@ -1482,7 +1493,7 @@ const server = http.createServer(async (req,res) => {
     }
     if(route==='/api/grouprank'&&req.method==='GET'){
       const dates=grDates();let date=url.searchParams.get('date');if(!date||date==='latest')date=dates.at(-1)||null;else if(!validHeatDate(date))throw new UserError('請選擇有效日期');
-      return json(res,200,{record:date?read(`grouprank-${date}.json`,null):null,dates:dates.slice(-30),live:grLive.data&&Date.now()-grLive.at<600e3?grLive.data:null});
+      return json(res,200,{record:date?grRefresh(read(`grouprank-${date}.json`,null)):null,dates:dates.slice(-30),live:grLive.data&&Date.now()-grLive.at<600e3&&!grStale(grLive.data)?grLive.data:null});
     }
     /* ----- AI 盤後日報 ----- */
     if(route==='/api/report'&&req.method==='GET'){

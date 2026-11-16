@@ -3157,5 +3157,6 @@
  "，最低 {0}%": ", lowest {0}%",
  "依大盤環境分組（只記錄，不影響訊號；前兩張表只算多方訊號）": "By market regime (recorded only, never affects signals; the first two tables count long signals only)",
  "突破 20MA（多方）": "Above 20MA (long)",
- "跌破 20MA（空方）": "Below 20MA (short)"
+ "跌破 20MA（空方）": "Below 20MA (short)",
+ "研究族群已變更，但這一天沒有足夠的收盤資料可依新族群重建，顯示的是原本的紀錄": "Research groups have changed, but this day has too little closing data to rebuild the ranking with the new groups; the original record is shown"
 }

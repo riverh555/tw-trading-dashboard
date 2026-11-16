@@ -22,7 +22,7 @@ export function buildGroupRanking(groups, quotes, rules = RANK_RULES) {
     const up = all.filter(x => x.rate > 0).length, down = all.filter(x => x.rate < 0).length;
     all.sort((a, b) => b.rate - a.rate);
     return {
-      id: g.id, name: g.name, stocks: g.stockIds.length, quoted: all.length, used: used.length, excluded: all.length - used.length,
+      id: g.id, name: g.name, stocks: g.stockIds.length, members: [...g.stockIds], quoted: all.length, used: used.length, excluded: all.length - used.length,
       score: r2(score), wavg: uAmt ? r2(used.reduce((s, x) => s + x.rate * x.amount, 0) / uAmt) : null,
       avg: all.length ? r2(all.reduce((s, x) => s + x.rate, 0) / all.length) : null, median: r2(median(all.map(x => x.rate))),
       up, down, flat: all.length - up - down, breadth: all.length ? r2(up / all.length * 100) : null,
