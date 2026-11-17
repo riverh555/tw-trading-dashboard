@@ -928,16 +928,28 @@ function grPack(date,quotes,source){
   const scope=new Set(researchScope.groups.flatMap(g=>g.stockIds));
   return{date,source,asOf:times.at(-1)||null,builtAt:new Date().toISOString(),stocks:scope.size,quoted:[...scope].filter(id=>quotes.has(id)).length,rules:RANK_RULES,compare:prev?{date:prev.date}:null,groups:compareRanks(ranked,prev)};
 }
-// 研究族群改過（新增、刪除、改名或改成分股）後，收盤紀錄的族群與目前不同：以當日收盤資料依目前的族群重建並存檔。
-// 沒有足夠的收盤資料（時光機收盤畫格、快照、本機日成交都不到八成）時沿用原紀錄，並標示 stale
+// 研究族群改過（新增、刪除、改名或改成分股）後，收盤紀錄的族群與目前不同：依目前的族群重算並存檔。
+// 報價沿用原紀錄的成分股收盤資料，再以時光機收盤畫格、當日快照、本機日成交補上新加入的股票（不要求八成涵蓋）；
+// 仍有成分股沒有資料時標示 partial（排名只計入有資料的股票），之後每 10 分鐘最多再補一次（例如更新研究名單後）
 // 比對族群代號、名稱與成分股（較早的紀錄沒有成分股清單，只比對檔數）
-const grKey=(groups,ids)=>JSON.stringify(groups.map(g=>[g.id,g.name,ids?[...g.ids].sort():g.ids.length]).sort((a,b)=>a[0].localeCompare(b[0])));
-const grStale=rec=>{if(!rec?.groups)return false;const ids=rec.groups.every(g=>Array.isArray(g.members));
+const grKey=(groups,ids)=>JSON.stringify(groups.map(g=>[String(g.id),g.name,ids?[...g.ids].sort():g.ids.length]).sort((a,b)=>a[0].localeCompare(b[0])));
+const grStale=rec=>{if(!rec?.groups)return false;if(rec.partial)return true;const ids=rec.groups.every(g=>Array.isArray(g.members));
   return grKey(rec.groups.map(g=>({id:g.id,name:g.name,ids:ids?g.members:{length:g.stocks}})),ids)!==grKey(researchScope.groups.map(g=>({id:g.id,name:g.name,ids:g.stockIds})),ids);};
+let grTried=new Map(); // 日期 → { key, at }：同一組族群 10 分鐘內不重複補資料
 function grRefresh(rec){
   if(!rec?.groups||!rec.date||!grStale(rec))return rec;
-  const q=grCloseQuotes(rec.date);if(!q)return{...rec,stale:true};
-  const d=grPack(rec.date,q,'close');write(`grouprank-${rec.date}.json`,d);return d;
+  const key=grKey(researchScope.groups.map(g=>({id:g.id,name:g.name,ids:g.stockIds})),true),tried=grTried.get(rec.date);
+  if(tried?.key===key&&Date.now()-tried.at<600e3)return tried.data;
+  const q=new Map();
+  for(const g of rec.groups)for(const x of g.items||[])if(x.rate!=null&&x.amount>0&&!q.has(x.id))q.set(x.id,{name:x.name,close:x.close,rate:x.rate,amount:x.amount});
+  const want=new Set(researchScope.groups.flatMap(g=>g.stockIds)),fill=more=>{if(more)for(const [id,v] of more)if(want.has(id)&&!q.has(id))q.set(id,v);};
+  const missing=()=>[...want].filter(id=>!q.has(id)).length;
+  try{const day=loadDay(rec.date);if(missing()&&day?.frames.length&&day.frames.at(-1).t>=closeHM(M()))fill(quotesFromReplay(day,grMeta()));}catch{}
+  if(missing()&&lastSnap?.date===rec.date)fill(quotesFromSnapshot(lastSnap.rows,grMeta()));
+  if(missing())fill(quotesFromDaily(market().stocks,rec.date));
+  const d={...grPack(rec.date,q,rec.source==='live'?'live':'close'),asOf:rec.asOf||null};
+  if(missing())d.partial=true;
+  write(`grouprank-${rec.date}.json`,d);grTried.set(rec.date,{key,at:Date.now(),data:d});return d;
 }
 // 最新一個交易日的快照列（盤中監控 15 秒內的資料直接沿用）
 async function latestSnapRows(){
