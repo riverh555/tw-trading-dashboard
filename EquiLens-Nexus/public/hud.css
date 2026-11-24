@@ -795,4 +795,28 @@ a.ix-alert{color:inherit;text-decoration:none}a.ix-alert:hover .ix-ab>small{colo
 .wv-legend b{color:var(--ink)}
 .wv-rail .ia-tape{max-height:300px}
 .wv-rail .panel .contentpad{padding:10px 12px}
+.wv-studies{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 8px}
+.wv-studies:empty{display:none}
+.wv-study{display:inline-flex;align-items:center;gap:4px;padding:3px 4px 3px 10px;border:1px solid var(--line2);border-radius:999px;font-size:.78rem;background:rgba(3,8,16,.55)}
+.wv-study.failed{border-color:var(--down);color:var(--down)}
+.wv-study button{background:none;border:0;color:var(--muted);cursor:pointer;padding:2px 4px;font-size:.85rem;line-height:1}
+.wv-study button:hover{color:var(--ink)}
+#indicator-dialog{width:min(720px,96vw)}
+.ind-cats{margin:10px 0}
+.ind-row{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;padding:8px 10px;border:1px solid var(--line2);border-radius:var(--r);background:rgba(3,8,16,.55);cursor:pointer}
+.ind-row:hover{border-color:var(--line3)}
+.ind-row small{display:block;color:var(--muted);margin-top:4px}
+.ind-badges{display:flex;align-items:center;gap:6px;flex:none}
+.ind-star{background:none;border:0;color:var(--muted);cursor:pointer;padding:4px;font-size:1rem;line-height:1}
+.ind-star.on{color:#f0b90b}
+.ind-field{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px;align-items:center;margin:8px 0}
+.ind-field label{font-size:.84rem;color:var(--muted)}
+.ind-field input,.ind-field select{width:100%;padding:6px 8px}
+.ind-field input[type=checkbox]{width:auto}
+.ind-field input[type=color]{padding:2px;height:30px}
+.ind-field input:disabled,.ind-field select:disabled{opacity:.45}
+.ind-group{font-size:.78rem;color:var(--muted);margin:14px 0 2px;font-weight:600}
+.picker-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.picker-head h3{margin:0}
+#indicator-picker input[type=search]{width:100%;padding:8px 10px;margin-top:8px}
 @media (max-width:1100px){.wv-layout{grid-template-columns:1fr}.wv-chart{flex:none;height:420px;min-height:0}}

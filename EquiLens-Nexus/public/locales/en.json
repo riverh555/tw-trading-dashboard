@@ -3205,5 +3205,74 @@
  "）· 均線與 MACD 由 lightweight-charts-indicators 計算": ") · MA and MACD by lightweight-charts-indicators",
  "）· 均線與 MACD 由 lightweight-charts-indicators 計算 · 僅供看盤參考，不構成投資建議": ") · MA and MACD by lightweight-charts-indicators · For reference only; not investment advice",
  "加權指數當日走勢": "TAIEX intraday trend",
- "尚無指數當日走勢。": "No intraday index data yet."
+ "尚無指數當日走勢。": "No intraday index data yet.",
+ "K 線型態": "Candlestick Patterns"
+,
+ "MACD 已由上方開關顯示，請先關閉 MACD 開關再套用": "MACD is already shown by the toggle above. Turn off the MACD toggle first, then apply it."
+,
+ "MACD 開關已開啟，已移除目錄版 MACD": "MACD toggle turned on; removed the catalog MACD."
+,
+ "{0} 設定": "{0} Settings"
+,
+ "主圖": "Main chart"
+,
+ "僅顯示前 100 筆，請縮小搜尋範圍": "Showing the first 100 only. Narrow your search."
+,
+ "內建": "Built-in"
+,
+ "共 {0} 個指標": "{0} indicators in total"
+,
+ "共 {0} 個指標 · 收藏置頂": "{0} indicators in total · Favorites pinned on top"
+,
+ "副圖": "Sub-chart"
+,
+ "動能": "Momentum"
+,
+ "參數變更立即重新計算。": "Parameters apply and recalculate immediately."
+,
+ "取消收藏": "Unfavorite"
+,
+ "均線已由上方開關顯示，請先關閉均線開關再套用": "Moving averages are already shown by the toggle above. Turn off the MA toggle first, then apply it."
+,
+ "均線開關已開啟，已移除目錄版 SMA": "MA toggle turned on; removed the catalog SMA."
+,
+ "完成": "Done"
+,
+ "已套用": "Applied"
+,
+ "已套用 {0}": "Applied {0}"
+,
+ "找不到這個指標": "Indicator not found"
+,
+ "找不到這個指標。": "Indicator not found."
+,
+ "技術指標": "Technical Indicators"
+,
+ "指標分類": "Indicator categories"
+,
+ "搜尋指標名稱或代碼": "Search indicators by name or code"
+,
+ "收藏": "Favorite"
+,
+ "收藏置頂": "Favorites pinned on top"
+,
+ "查無符合的指標。": "No matching indicators."
+,
+ "波動": "Volatility"
+,
+ "社群": "Community"
+,
+ "移除指標": "Remove indicator"
+,
+ "計算失敗": "Calculation failed"
+,
+ "趨勢": "Trend"
+,
+ "這個指標沒有可調參數。": "This indicator has no adjustable parameters."
+,
+ "通道": "Channels"
+,
+ "需要其他商品資料，暫不支援": "Requires data of other symbols, not supported yet"
+,
+ "震盪": "Oscillators"
 }
