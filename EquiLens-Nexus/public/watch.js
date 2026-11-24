@@ -5,6 +5,7 @@ import { esc, fmt, pct, cls, sparkSVG } from './insight-ui.js';
 import * as MK from './market.js';
 import { bookHTML, tapeHTML } from './intraday.js';
 import { SEEDED_FAVORITES, INDICATOR_CATEGORIES, GROUP_LABELS, SOURCE_OPTIONS, searchIndicators, pinFavorites, applyBlocked, normalizeInputs } from './indicators.js';
+import { initialVisibleRange } from './chart-range.js';
 
 let C = null; // { api, toast, state, redraw, page, inScope }
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } }, savePref = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
@@ -15,7 +16,7 @@ const W = {
   id: null, period: pref('nexus.watchPeriod', '5m'), group: pref('nexus.watchGroup', ''), query: '',
   board: null, data: null, error: '', lib: null, libError: '',
   showMA: pref('nexus.watchMA', '1') === '1', showVol: pref('nexus.watchVol', '1') === '1', showMACD: pref('nexus.watchMACD', '1') === '1',
-  chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null,
+  chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null, fitLeftPad: false,
   registry: null, studies: [], renderers: new Map(), studySeq: 0, favs: null,
   pickerQ: '', pickerCat: 'all', pickerMode: 'list', pickerStudy: null, pickerTimer: null, studiesHTML: '',
 };
@@ -95,7 +96,7 @@ async function ensureLibs() {
     return W.lib;
   } catch (e) { W.libError = `${e.message}。${VENDOR_HINT}`; throw e; }
 }
-function destroyMainChart() { try { W.resizeObs?.disconnect(); } catch { } W.resizeObs = null; try { W.chart?.remove(); } catch { } W.chart = null; W.series = null; W.chartEl = null; W.renderers = new Map(); }
+function destroyMainChart() { try { W.resizeObs?.disconnect(); } catch { } W.resizeObs = null; try { W.chart?.remove(); } catch { } W.chart = null; W.series = null; W.chartEl = null; W.renderers = new Map(); W.fitLeftPad = false; }
 function destroyIdxChart() { try { W.idxChart?.remove(); } catch { } W.idxChart = null; W.idxChartEl = null; }
 function buildMainChart() {
   const { lwc, SMA, MACD } = W.lib, el = document.getElementById('wv-chart');
@@ -133,6 +134,7 @@ function buildMainChart() {
   W.resizeObs = new ResizeObserver(() => { const e2 = document.getElementById('wv-chart'); if (e2 && W.chart) W.chart.applyOptions({ width: e2.clientWidth, height: e2.clientHeight }); });
   W.resizeObs.observe(el);
   W.chart = chart; W.chartEl = el; W.series = S; W.chartKey = chartKey();
+  W.fitLeftPad = true; // 初次載入左邊留白，避免第一根 K 線貼左緣被切掉；之後輪詢不再重設，不干擾捲動
   applyBars();
 }
 function applyBars() {
@@ -151,6 +153,11 @@ function applyBars() {
   }
   for (const study of W.studies) renderStudy(study, { reuse: true });
   paintStudies();
+  if (W.fitLeftPad) {
+    W.fitLeftPad = false;
+    const range = initialVisibleRange(bars.length);
+    if (range) { try { W.chart.timeScale().setVisibleLogicalRange(range); } catch { } }
+  }
 }
 
 // ---------- 技術指標套用 ----------
