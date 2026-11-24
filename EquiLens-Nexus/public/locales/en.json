@@ -3203,5 +3203,7 @@
  "載入圖表元件中…": "Loading chart…",
  "載入自選清單中…": "Loading watchlist…",
  "）· 均線與 MACD 由 lightweight-charts-indicators 計算": ") · MA and MACD by lightweight-charts-indicators",
- "）· 均線與 MACD 由 lightweight-charts-indicators 計算 · 僅供看盤參考，不構成投資建議": ") · MA and MACD by lightweight-charts-indicators · For reference only; not investment advice"
+ "）· 均線與 MACD 由 lightweight-charts-indicators 計算 · 僅供看盤參考，不構成投資建議": ") · MA and MACD by lightweight-charts-indicators · For reference only; not investment advice",
+ "加權指數當日走勢": "TAIEX intraday trend",
+ "尚無指數當日走勢。": "No intraday index data yet."
 }

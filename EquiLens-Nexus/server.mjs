@@ -707,10 +707,13 @@ async function chartReport(id, period) {
   const info = boardData([id]).stocks[0], result = period === 'day' ? await chartDay(id) : await chartIntraday(id, PERIOD_MINUTES[period] || 5);
   return { id, name: info.name, sector: info.sector, score: info.score, period, prev: info.prev, quote: info.quote, daily: info.daily, inScope: inScope(id), live: !!lastSnap && liveWindow(), stream: false, asOf: lastSnap?.asOf || null, ...result };
 }
-// 即時看盤：個股即時走勢＋指定週期 K 線＋加權指數（K 線已換成圖表可用的時間格式；成交明細為 [時間, 買進價, 賣出價, 成交價, 單量, 內外盤]）
+// 即時看盤：個股即時走勢＋指定週期 K 線＋加權指數（指數另回當日 1 分走勢；K 線已換成圖表可用的時間格式；成交明細為 [時間, 買進價, 賣出價, 成交價, 單量, 內外盤]）
 async function watchReport(id, period) {
   const [intra, chart, index] = await Promise.all([intradayReport(id, ''), chartReport(id, period), indexReport('TAIEX')]);
-  return { ...intra, period, bars: toChartBars(chart.bars), chartDays: chart.days, session: chart.session, indexBars: toChartBars((index.daily || []).slice(-60)), indexQuote: index.quote, indexRef: index.ref, indexName: index.name };
+  return { ...intra, period, bars: toChartBars(chart.bars), chartDays: chart.days, session: chart.session,
+    indexBars: toChartBars((index.daily || []).slice(-60)),
+    indexIntraday: { open: index.open, close: index.close, ref: index.ref, source: index.source, minutes: { m: index.minutes?.m || [], c: index.minutes?.c || [] } },
+    indexQuote: index.quote, indexRef: index.ref, indexName: index.name };
 }
 // 日 K：研究名單內用本機日成交資料（不還原），其他股票或本機資料過舊時向資料源取近 240 天並快取；
 // 當日最後一根以即時快照組成（盤後沒有快照時用時光機畫格近似）。

@@ -73,6 +73,7 @@ function paintWatch() {
   const iq = document.getElementById('wv-idx-quote'); if (iq && W.data) { const q = W.data.indexQuote; iq.innerHTML = q?.last != null ? `<b class="${cls(q.change)}">${fmt(q.last, 2)}</b> <span class="${cls(q.change)}">${q.changePrice > 0 ? '+' : ''}${fmt(q.changePrice, 2)}（${pct(q.change)}）</span>` : ''; }
   const lg = document.getElementById('wv-legend'); if (lg && W.data?.bars?.length) lg.textContent = barLabel(W.data.bars.at(-1));
   applyBars();
+  buildIdxChart();
 }
 
 // ---------- 圖表 ----------
@@ -133,9 +134,45 @@ function applyBars() {
     } catch { }
   }
 }
+// 加權指數當日走勢（1 分線）；沒有分時資料時退回日 K
+function indexIntradaySVG(d) {
+  const M = d?.minutes, ref = d?.ref, empty = '<div class="wv-empty">尚無指數當日走勢。</div>';
+  if (!M?.m?.length || !(ref > 0)) return empty;
+  const vals = M.c.filter(v => v != null); if (!vals.length) return empty;
+  const w = 340, h = 150, L = 8, R = 44, T = 10, B = 16, x0 = L, x1 = w - R, y0 = T, y1 = h - B;
+  const dev = Math.max(Math.max(...vals.map(v => Math.abs(v - ref))), ref * 0.002) * 1.1;
+  const yMax = ref + dev, yMin = ref - dev, yOf = v => y0 + (yMax - Math.min(yMax, Math.max(yMin, v))) / (yMax - yMin) * (y1 - y0);
+  const open = d.open || 540, close = d.close || 810, span = close - open || 1;
+  const xOf = m => x0 + (Math.min(close, Math.max(open, m)) - open) / span * (x1 - x0);
+  const pts = M.m.map((m, i) => [xOf(m), yOf(M.c[i])]);
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
+  const area = `${line} L${x1.toFixed(1)} ${yOf(ref).toFixed(1)} L${x0.toFixed(1)} ${yOf(ref).toFixed(1)} Z`;
+  const last = vals.at(-1), col = last >= ref ? 'var(--up)' : 'var(--down)';
+  const soft = last >= ref ? 'var(--up-soft, rgba(255,77,103,.14))' : 'var(--down-soft, rgba(32,217,139,.14))';
+  const [lx, ly] = pts.at(-1), hm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  return `<svg class="wv-idxline" viewBox="0 0 ${w} ${h}" role="img" aria-label="加權指數當日走勢">
+    <line x1="${x0}" x2="${x1}" y1="${yOf(ref).toFixed(1)}" y2="${yOf(ref).toFixed(1)}" stroke="var(--soft)" stroke-dasharray="3 3"/>
+    <text x="${x0}" y="${(yOf(yMax) + 8).toFixed(1)}" class="ia-ax">${fmt(yMax, 1)}</text>
+    <text x="${x0}" y="${(yOf(ref) - 2).toFixed(1)}" class="ia-ax">${fmt(ref, 1)}</text>
+    <text x="${x0}" y="${(yOf(yMin) - 2).toFixed(1)}" class="ia-ax">${fmt(yMin, 1)}</text>
+    <text x="${x1 + 4}" y="${(yOf(last) + 4).toFixed(1)}" class="ia-ax ${last >= ref ? 'up' : 'down'}">${fmt(last, 1)}</text>
+    <path d="${area}" fill="${soft}"/><path d="${line}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round"/>
+    <circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.5" fill="${col}"/>
+    <text x="${x0}" y="${h - 3}" class="ia-ax">${hm(open)}</text><text x="${x1}" y="${h - 3}" text-anchor="end" class="ia-ax">${hm(close)}</text>
+  </svg>`;
+}
 function buildIdxChart() {
-  const { lwc } = W.lib, el = document.getElementById('wv-idx');
-  if (!el || !W.data?.indexBars?.length) return;
+  const el = document.getElementById('wv-idx');
+  if (!el) return;
+  const intra = W.data?.indexIntraday;
+  if (intra?.minutes?.m?.length) {
+    if (W.idxChart) destroyIdxChart();
+    W.idxChartEl = null;
+    el.innerHTML = indexIntradaySVG(intra);
+    return;
+  }
+  if (!W.data?.indexBars?.length || !W.lib?.lwc) { if (!W.idxChart) el.innerHTML = '<div class="wv-empty">尚無 K 線資料。</div>'; return; }
+  const { lwc } = W.lib;
   if (W.idxChartEl === el && W.idxChart) { W.idxChart.series?.setData?.(numBars(W.data.indexBars)); return; }
   destroyIdxChart();
   const chart = lwc.createChart(el, {

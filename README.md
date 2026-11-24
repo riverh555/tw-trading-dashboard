@@ -37,7 +37,7 @@ component's `.local/` folder; API keys are encrypted by the operating system (se
   % change or projected-volume conditions on any stock; they are pushed to your phone when met (one-time or repeating). With a Fugle key the radar runs on a
   WebSocket live stream (watchlist first, up to your plan's limit) instead of periodic snapshots.
 - **Live watch** (MARKET → Live Watch) – a watch-only terminal: watchlist strip with mini sparklines, 1m/3m/5m/15m/60m/daily
-  candles (MA, volume and MACD toggles), plus a TAIEX mini chart, order book and trade tape with bid/ask at each trade.
+  candles (MA, volume and MACD toggles), plus a TAIEX intraday line, order book and trade tape with bid/ask at each trade.
   Refreshes every 3 seconds during the session; no orders. Charts use Lightweight Charts and indicators downloaded once
   by `node tools/fetch-vendor.mjs` ([details, zh-TW](docs/features/live-watch.md)).
 - **Day-trade monitoring** (Taiwan, FinMind + Fugle) – 5-minute bars only. The watch list is the previous session's
