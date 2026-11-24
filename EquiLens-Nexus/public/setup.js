@@ -21,6 +21,7 @@ const PROVIDER_NOTES = {
   fugle: '富果行情 API：台股日 K（含還原股價）、分 K，以及盤中雷達與當沖監控用的 WebSocket 即時推播。訂閱數（1 檔 × 1 個頻道）：基本 5、開發者 300、進階 2,000；當沖完整模式每檔訂閱逐筆成交、分 K、五檔 3 個頻道，訂閱不足時改用聚合行情（每檔 1 個，自選股優先）。付費方案另有全市場即時快照。啟用後熱浪圖、時光機等其他資料仍依原本的資料源。',
   twelvedata: '涵蓋全球多數市場：股票清單、日 K、即時報價、分 K（免費方案每分鐘 8 次、每日 800 次）。',
   alphavantage: '以美股為主（另支援英、加、德、印）：日 K、報價、新聞情緒、本益比、季營收（免費方案每日 25 次）。',
+  taishin: '台新證券（Nova API）：台股盤中即時報價，需先完成台新數位 API 線上簽署與行情認證；填寫身分證字號、登入密碼與憑證（.pfx）檔密碼。',
 };
 const LLM_NOTES = {
   anthropic: 'Claude（Anthropic）：預設 Claude Opus 5.5。',
@@ -40,9 +41,11 @@ function capChips(p, labels) { return p.caps.length ? p.caps.map(c => `<span cla
 function providerCard(p, cfg) {
   const labels = cfg.capabilityLabels, keyless = p.key === 'none';
   const status = keyless ? '<span class="tag cyan">免金鑰</span>' : p.configured ? `<span class="tag cyan">已設定</span>${p.plan?.plan ? ` <span class="tag">${esc(p.plan.plan)}</span>` : ''}` : '<span class="tag amber">未設定金鑰</span>';
+  const actions = `<button class="primary" type="submit">驗證並儲存</button>${p.configured ? `<button type="button" data-setup-recheck="${p.id}" title="重新讀取方案等級（例如升級或續訂後）">重新驗證</button><button type="button" data-setup-unkey="${p.id}">移除金鑰</button>` : ''}`;
+  const taishinFields = p.id === 'taishin' ? `<div class="taishin-rows"><div class="taishin-row"><label class="key">證券帳號<input name="taishinPersonalId" type="text" autocomplete="off" placeholder="N123456789（身分證字號）" value="${esc(cfg.config.providers?.taishin?.personalId || '')}"></label><label class="key">登入密碼<input name="key" type="password" autocomplete="off" placeholder="台新證券登入密碼" required></label></div><div class="taishin-row"><label class="key wide">憑證檔案路徑<input name="taishinCertPath" type="text" autocomplete="off" placeholder="C:/path/to/tssco/taishin_cert.pfx" value="${esc(cfg.config.providers?.taishin?.certPath || '')}"></label></div><div class="taishin-row"><label class="key">憑證密碼<input name="taishinCertPass" type="password" autocomplete="off" placeholder="憑證密碼"></label><div class="taishin-actions">${actions}</div></div></div>` : '';
   return `<article class="setup-provider ${p.enabled ? 'on' : ''}"><div class="sp-head"><label class="checkbox" style="flex-direction:row"><input type="checkbox" data-setup-enable="${p.id}" ${p.enabled ? 'checked' : ''}><b translate="no">${esc(p.name)}</b></label>${status}<a class="sp-link" href="${esc(p.site)}" target="_blank" rel="noopener noreferrer">官網 ↗</a></div>
   <p class="fine">${esc(PROVIDER_NOTES[p.id] || '')}</p><div class="sp-caps">${capChips(p, labels)}</div>
-  ${keyless ? '' : `<form class="sp-key" data-setup-key="${p.id}"><input name="key" type="password" autocomplete="off" placeholder="${esc(p.configured ? '輸入新金鑰以更換' : '貼上 API 金鑰')}" required><button class="primary" type="submit">驗證並儲存</button>${p.configured ? `<button type="button" data-setup-recheck="${p.id}" title="重新讀取方案等級（例如升級或續訂後）">重新驗證</button><button type="button" data-setup-unkey="${p.id}">移除金鑰</button>` : ''}</form>`}</article>`;
+  ${keyless ? '' : `<form class="sp-key" data-setup-key="${p.id}">${taishinFields}${p.id === 'taishin' ? `<p class="fine">首次使用需完成台新數位 API 線上簽署與行情認證；尚未開通 API 者，登入時 SDK 會自動執行 API 認證。</p>` : `<input name="key" type="password" autocomplete="off" placeholder="${esc(p.configured ? '輸入新金鑰以更換' : '貼上 API 金鑰')}" required>${actions}`}</form>`}</article>`;
 }
 function providerList(cfg) {
   const list = cfg.providers.filter(p => p.supportsMarket);
@@ -202,7 +205,7 @@ document.addEventListener('click', async e => {
 document.addEventListener('change', async e => {
   const el = e.target; if (!C) return; const ds = el.dataset;
   try {
-    if (ds.setupEnable) { const cfg = await loadConfig(), on = el.checked, cur = cfg.config.providers.enabled.filter(x => x !== ds.setupEnable); S.cfg = await C.api('providers', { enabled: on ? [...cur, ds.setupEnable] : cur, prefer: cfg.config.providers.prefer }); await C.reload(); return; }
+    if (ds.setupEnable) { const cfg = await loadConfig(), on = el.checked, cur = cfg.config.providers.enabled.filter(x => x !== ds.setupEnable); S.cfg = await C.api('providers', { enabled: on ? [...cur, ds.setupEnable] : cur, prefer: cfg.config.providers.prefer, taishin: cfg.config.providers.taishin }); await C.reload(); return; }
     if (ds.setupPrefer) { const cfg = await loadConfig(), prefer = { ...cfg.config.providers.prefer }; if (el.value) prefer[ds.setupPrefer] = el.value; else delete prefer[ds.setupPrefer]; S.cfg = await C.api('providers', { enabled: cfg.config.providers.enabled, prefer }); await C.reload(); return; }
     if (ds.setupCfg) { await changeConfig(ds.setupCfg, el.value); return; }
     if ('llmProvider' in ds) { S.llmDraft = { provider: el.value }; C.redraw(); return; }
@@ -217,7 +220,19 @@ document.addEventListener('submit', async e => {
   if (!key && !add && !['setup-llm', 'setup-group', 'setup-remote'].includes(f.id)) return;
   e.preventDefault(); const btn = f.querySelector('button[type=submit]'); if (btn) btn.disabled = true;
   try {
-    if (key) { S.cfg = await C.api('provider-key', { id: key, key: f.elements.key.value.trim() }); f.reset(); await C.reload(); C.toast(t('金鑰已驗證並加密儲存')); }
+    if (key) {
+      if (key === 'taishin') {
+        const personalId = f.elements.taishinPersonalId?.value?.trim() || '';
+        const certPath = f.elements.taishinCertPath?.value?.trim() || '';
+        const certPass = f.elements.taishinCertPass?.value?.trim() || '';
+        const cfg = await loadConfig();
+        const saved = await C.api('providers', { enabled: cfg.config.providers.enabled, prefer: cfg.config.providers.prefer, taishin: { personalId, certPath } });
+        S.cfg = saved;
+        const k = await C.api('provider-key', { id: key, key: f.elements.key.value.trim(), certPass });
+        S.cfg = k;
+        f.reset(); await C.reload(); C.toast(t('金鑰已驗證並加密儲存'));
+      } else { S.cfg = await C.api('provider-key', { id: key, key: f.elements.key.value.trim() }); f.reset(); await C.reload(); C.toast(t('金鑰已驗證並加密儲存')); }
+    }
     else if (add) { const st = C.state(); let n = 0, bad = []; for (const id of splitIds(f.elements.ids.value)) { try { const r = await C.api('group-stocks', { groupId: add, stockId: id }); if (r.added) n++; } catch (err) { bad.push(id); } } await C.reload(); C.toast(bad.length ? t('已加入 {n} 檔；無法加入：{ids}', { n, ids: bad.join(', ') }) : t('已加入 {n} 檔', { n })); void st; }
     else if (f.id === 'setup-remote') {
       const v = Object.fromEntries(new FormData(f)), list = s => String(s || '').split(/[\s,，、;；]+/).map(x => x.trim()).filter(Boolean);

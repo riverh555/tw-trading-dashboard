@@ -8,9 +8,10 @@ import finmind from './finmind.mjs';
 import twse from './twse.mjs';
 import fugle from './fugle.mjs';
 import twelvedata from './twelvedata.mjs';
+import taishin from './taishin.mjs';
 import alphavantage from './alphavantage.mjs';
 
-export const PROVIDERS = { finmind, twse, fugle, twelvedata, alphavantage };
+export const PROVIDERS = { finmind, twse, fugle, twelvedata, taishin, alphavantage };
 // 能力名稱（介面顯示用繁中原文，翻譯在 locales）
 export const CAPABILITIES = {
   universe: '股票清單', calendar: '交易日曆', daily: '日 K 歷史', adjusted: '還原股價', dailyAll: '全市場單日行情', snapshot: '盤中即時報價', intraday: '分 K',

@@ -89,7 +89,13 @@ test('books: an unfinished part file (crash before close) is still readable up t
   const dir = tmp(), date = '2026-10-15';
   const rec = createBookRecorder({ dir, date, flushMs: 10 });
   for (let i = 0; i < 50; i++) rec.record({ kind: 'trade', id: '1569', time: 1760490000000 + i, price: 100 + i, size: 1, serial: i });
-  await new Promise(r => setTimeout(r, 60));
+  // 等待背景 flush 完成（完整套件並行執行時固定延遲可能不足）
+  let flushed = [];
+  for (let i = 0; i < 100; i++) {
+    flushed = await readStock(dir, date, '1569');
+    if ((flushed?.length || 0) >= 50) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
   // 不呼叫 close()：模擬當機，檔尾不完整
   const file = path.join(dir, date, 'part-1.ndjson.gz'), copy = path.join(dir, date, 'part-2.ndjson.gz');
   fs.copyFileSync(file, copy); fs.rmSync(file);

@@ -15,7 +15,7 @@ export const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini', 'compatible'];
 //   off               不對外開放，只能在這台電腦使用
 export const TUNNEL_MODES = ['auto', 'cloudflare-quick', 'cloudflare-named', 'custom', 'off'];
 export const REMOTE_DEFAULTS = Object.freeze({ tunnel: 'auto', pocketHosts: [], contact: '', access: { hosts: [], teamDomain: '', aud: '' } });
-export const CONFIG_DEFAULTS = Object.freeze({ version: 1, setupDone: false, market: 'TW', language: 'zh-TW', providers: { enabled: [], prefer: {} }, llm: { provider: 'anthropic', model: '', baseUrl: '', effort: 'high' }, publicUrl: '', upColor: '', remote: REMOTE_DEFAULTS });
+export const CONFIG_DEFAULTS = Object.freeze({ version: 1, setupDone: false, market: 'TW', language: 'zh-TW', providers: { enabled: [], prefer: {}, taishin: { personalId: '', certPath: '' } }, llm: { provider: 'anthropic', model: '', baseUrl: '', effort: 'high' }, publicUrl: '', upColor: '', remote: REMOTE_DEFAULTS });
 
 const str = (v, max = 300) => typeof v === 'string' ? v.trim().slice(0, max) : '';
 const safeUrl = v => { try { const u = new URL(v); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password ? u.toString().replace(/\/$/, '') : ''; } catch { return ''; } };
@@ -44,6 +44,7 @@ export function normalizeConfig(c = {}) {
     providers: {
       enabled: [...new Set((Array.isArray(p.enabled) ? p.enabled : []).filter(x => typeof x === 'string' && /^[a-z0-9]{2,20}$/.test(x)))],
       prefer: Object.fromEntries(Object.entries(p.prefer || {}).filter(([k, v]) => /^[a-zA-Z]{2,20}$/.test(k) && typeof v === 'string' && /^[a-z0-9]{2,20}$/.test(v))),
+      taishin: { personalId: str(p.taishin?.personalId, 30), certPath: str(p.taishin?.certPath, 300) },
     },
     llm: { provider: LLM_PROVIDERS.includes(l.provider) ? l.provider : d.llm.provider, model: str(l.model, 120), baseUrl: l.baseUrl ? safeUrl(l.baseUrl) : '', effort: ['low', 'medium', 'high', 'xhigh'].includes(l.effort) ? l.effort : d.llm.effort },
     publicUrl: c.publicUrl ? safeUrl(c.publicUrl) : '',

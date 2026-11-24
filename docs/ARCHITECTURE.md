@@ -1,7 +1,7 @@
 # EquiLens architecture
 
 ```
-Browser (desktop) ─▶ EquiLens Nexus  (Node, 127.0.0.1:4330) ─▶ data sources (TWSE/TPEx, FinMind, Fugle, Twelve Data, Alpha Vantage)
+Browser (desktop) ─▶ EquiLens Nexus  (Node, 127.0.0.1:4330) ─▶ data sources (TWSE/TPEx, FinMind, Fugle, Taishin, Twelve Data, Alpha Vantage)
                          │  .local/ (config, groups, prices, records)          ─▶ AI service (Claude, OpenAI, Gemini, OpenAI-compatible)
 Phone (PWA) ─▶ Cloudflare Tunnel ─▶ EquiLens Pocket (127.0.0.1:4340) ─▶ Nexus API (Pocket never touches data files)
 ```
@@ -23,6 +23,8 @@ mobile UI and Web Push relay. There is no database and no build step: plain ES m
 | `lib/engine.mjs` | Four-factor scoring; factors the current sources can't provide are excluded and weights renormalized |
 | `lib/heatmap.mjs` | Sector heatmap from whole-market daily data, live snapshots or local research data |
 | `lib/radar.mjs`, `lib/replay.mjs` | Intraday alerts and the per-minute time-machine recorder |
+| `lib/candles.mjs` | Live-watch candle periods: bar time conversion, 3-minute synthesis from 1-minute bars, and period validation (`1m/3m/5m/15m/60m/day`) used by `/api/chart` and `/api/watch` |
+| `tools/fetch-vendor.mjs` | One-time downloader for the pinned chart modules (Lightweight Charts 5.3.0, indicators 0.26.4, oakscriptjs 0.19.0, fancy-canvas 2.1.0) into the gitignored `public/vendor/`; npm verifies integrity, no CDN |
 | `lib/pricealerts.mjs` | Custom alerts: user rules per stock (price above/below, % up/down, projected volume ratio), checked on every snapshot or stream row; fires on the false→true crossing, one-time rules disable themselves, repeating rules re-arm with a 5-minute cooldown. Rules in `.local/price-alerts.json`; APIs `GET/POST /api/price-alerts`, `POST /api/price-alerts/delete` |
 | `lib/warrants.mjs` | Warrant tracking (Taiwan, call warrants only, pure): FinMind warrant→underlying lookup (`TaiwanStockInfoWithWarrantSummary`, reused codes resolved by listing/last-trading date), TWSE `MI_INDEX` type 0999 and TPEx `tpex_warrant_daily_quts` quote parsing (`callWarrantQuotes` in `providers/twse.mjs`), issuer from the warrant name (the issuer head office's own warrants are excluded), per-branch aggregation by underlying (net amount, share of the underlying's call-warrant turnover, streaks; big-buy and consecutive-buy signals), and the per-stock warrant list. The broker watch queries `/taiwan_stock_warrant_trading_daily_report` once per tracked branch; APIs `GET /api/warrants?id=`, `GET /api/warrants/brokers?wid=&date=`; cache `.local/warrants/` |
 | `lib/chipwatch.mjs` | Chip tracking (Taiwan, FinMind Sponsor): broker-branch tracking (one by-branch request per tracked branch after 18:30, `.local/broker-watch/<date>.json`, streaks; alerts for one-day dominance — net buying as a share of the day's volume plus a minimum amount — and multi-day accumulation as a share of total shares in custody) and the big-holder concentration ranking (whole-market shareholding table per week, `.local/holders-all/<date>.json`, 1- and 4-week change). APIs `/api/chipwatch*`, `/api/holders/rank*`; `POST /api/chipwatch/query` runs in the background (202) and the pages poll `GET /api/chipwatch?date=` for progress (`busy`, `query`) |
@@ -37,10 +39,16 @@ mobile UI and Web Push relay. There is no database and no build step: plain ES m
 | `lib/briefing.mjs`, `lib/newswatch.mjs` | Today's Brief (news, economic and earnings calendars) and news push (the data source's market news plus, for Taiwan, the cnyes news list via `lib/providers/cnyes.mjs`; the same article on both sources pushes once, a newly added source is recorded silently the first time) |
 | `lib/scope.mjs`, `lib/watchgroups.mjs`, `lib/access.mjs` | Research groups, watchlist groups, Cloudflare Access JWT verification |
 
-Front end (`public/`): `app.js` (shell and pages), `setup.js` (setup wizard and system settings), `market.js`
+Front end (`public/`): `app.js` (shell and pages), `setup.js` (setup wizard and system settings), `watch.js`
+(watch-only terminal: Lightweight Charts loaded lazily via the importmap in `index.html`, with `MA`/`MACD` from the
+indicators module), `market.js`
 (client-side market clock, colors and units), `i18n.js` (translation), plus page modules. `i18n.js`, `market.js`,
 `insight-ui.js`, `report-card.js`, `flow-cards.js`, `save-image.js` and `intraday.js` are shared with Pocket as identical copies;
 a test fails if they drift apart.
+
+The chart modules are not committed: run `node tools/fetch-vendor.mjs` once after cloning. `server.mjs` adds only the
+files actually present under `public/vendor/` to its static allowlist, and allows the single inline importmap script
+through CSP using its SHA-256 content hash (computed at startup), so the strict `script-src 'self'` stays in place.
 
 ### Data source router
 
@@ -68,6 +76,10 @@ provider per capability (preferred source first, then the enabled order), inject
 
 Capabilities: `universe, calendar, daily, adjusted, dailyAll, snapshot, stream, dayTrade, intraday, news, marketNews,
 valuation, revenue, institutional, institutionalAll, brokers, holders, flows, futures, margin`.
+
+A provider does not have to speak HTTP: the Taishin provider (`lib/providers/taishin.mjs`) talks to the Taishin Nova API through
+the Node.js SDK (`taishin-sdk`, Rust native binding with REST + WebSocket clients), and adds
+`sdk.registerApiAuth(account)` for users who have not opened the API yet.
 
 `stream` (Fugle WebSocket) only drives the intraday radar and live board. During the session `server.mjs` opens it for
 the watchlist first, then the research list, up to `stream.limit` for the verified plan, and refreshes the list when it

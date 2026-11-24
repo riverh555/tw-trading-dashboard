@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { warrantMaster, warrantOn, normalizeRatio, parseTwseWarrants, parseTpexWarrants, turnoverByTarget, issuerOf, issuerBranch, branchWarrants, stockWarrants, WARRANT_DEFAULTS } from '../lib/warrants.mjs';
 import { brokerWatchAlerts, normalizeChipwatch } from '../lib/chipwatch.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -98,10 +98,10 @@ test('server: broker tracking adds call warrants per branch; stock warrant panel
   fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ interval: 20, monitor: false, chipwatch: { branches: [{ id: '9268', name: '凱基台北' }, { id: '9200', name: '凱基' }], auto: false } }));
   fs.writeFileSync(path.join(dir, 'universe.json'), JSON.stringify([{ id: '3017', name: '奇鋐', sector: '電腦及週邊設備業', market: '上市' }, { id: '2454', name: '聯發科', sector: '半導體業', market: '上市' }, { id: '2330', name: '台積電', sector: '半導體業', market: '上市' }]));
   fs.writeFileSync(path.join(dir, 'watchlist.json'), JSON.stringify(['3017']));
-  const child = spawn(process.execPath, ['--import', path.join(root, 'tests/helpers/mock-network.mjs'), 'server.mjs'], { cwd: root, env: { ...process.env, PORT: '4397', EQUITY_DATA_DIR: dir, FINMIND_API_TOKEN: 'mock', MOCK_LOG: log }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', pathToFileURL(path.join(root, 'tests/helpers/mock-network.mjs')).href, 'server.mjs'], { cwd: root, env: { ...process.env, PORT: '4400', EQUITY_DATA_DIR: dir, FINMIND_API_TOKEN: 'mock', MOCK_LOG: log }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('exit', c => reject(new Error(`Server exited ${c}`))); setTimeout(() => reject(new Error('Server startup timeout')), 10000).unref(); });
-    const base = 'http://127.0.0.1:4397/api/', get = async p => { const r = await fetch(base + p); return { status: r.status, body: await r.json() }; };
+    const base = 'http://127.0.0.1:4400/api/', get = async p => { const r = await fetch(base + p); return { status: r.status, body: await r.json() }; };
     const s = (await get('state')).body, post = async (p, b) => { const r = await fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': s.csrf }, body: JSON.stringify(b) }); return { status: r.status, body: await r.json() }; };
     // 非交易日直接拒絕；查詢在背景執行（202），以 GET /api/chipwatch?date= 取得進度與結果
     const bad = await post('chipwatch/query', { date: '2026-10-17' });

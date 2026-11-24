@@ -36,6 +36,10 @@ component's `.local/` folder; API keys are encrypted by the operating system (se
   watchlist and research groups, plus a live board with daily / 5-minute candles. **Custom alerts** let you set price,
   % change or projected-volume conditions on any stock; they are pushed to your phone when met (one-time or repeating). With a Fugle key the radar runs on a
   WebSocket live stream (watchlist first, up to your plan's limit) instead of periodic snapshots.
+- **Live watch** (MARKET → Live Watch) – a watch-only terminal: watchlist strip with mini sparklines, 1m/3m/5m/15m/60m/daily
+  candles (MA, volume and MACD toggles), plus a TAIEX mini chart, order book and trade tape with bid/ask at each trade.
+  Refreshes every 3 seconds during the session; no orders. Charts use Lightweight Charts and indicators downloaded once
+  by `node tools/fetch-vendor.mjs` ([details, zh-TW](docs/features/live-watch.md)).
 - **Day-trade monitoring** (Taiwan, FinMind + Fugle) – 5-minute bars only. The watch list is the previous session's
   highest-turnover stocks across the whole market (top 50 with at least NT$100M traded, by default) plus every stock in
   your research groups. A 5-minute close above the 20MA is a long signal; a close below the 20MA, or below the opening
@@ -103,6 +107,7 @@ Australia, Singapore, India.**
 | [TWSE / TPEx open data](https://openapi.twse.com.tw) | TW | none | stock list, trading calendar, daily bars, whole-market daily data, institutional flows (whole market by day), P/E, monthly revenue |
 | [FinMind](https://finmindtrade.com) | TW | free / Sponsor | daily and adjusted bars, institutional flows, revenue, P/E, news, shareholding, futures, margin; **Sponsor** adds live snapshots, minute bars, whole-market data, broker branches and the pre-market day-trade list, suspensions and reference prices |
 | [Fugle](https://developer.fugle.tw) | TW | free / paid | daily (adjusted) and minute bars; WebSocket live stream for the intraday radar and day-trade monitoring (subscriptions: Basic 5, Developer 300, Advanced 2,000 — full mode uses trades + 1-minute bars + order book, 3 per stock; otherwise aggregates, 1 per stock); paid plans add a whole-market live snapshot |
+| [Taishin Securities](https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare) | TW | Taishin account + quote authentication | intraday live quotes via the Nova API (Node.js SDK, enter the account, certificate file, login password and certificate password) |
 | [Twelve Data](https://twelvedata.com) | all 12 markets | free / paid | stock list, daily bars, live quotes, minute bars |
 | [Alpha Vantage](https://www.alphavantage.co) | US, GB, CA, DE, IN | free / premium | daily bars, quotes, news sentiment, P/E, quarterly revenue |
 
@@ -122,7 +127,7 @@ plan than the one detected when you saved the key.
 - **Node.js 22 or newer** – https://nodejs.org
 - Windows 10/11, macOS or Linux
 - At least one data source that covers your market (TWSE/TPEx open data works for Taiwan without any key)
-- Optional: an API key for an AI model; `cloudflared` for phone access
+- Optional: an API key for an AI model; `cloudflared` for phone access; Node.js plus the Taishin Nova API SDK and a certificate (`.pfx`) for Taishin quotes
 
 ## Quick start
 

@@ -26,6 +26,7 @@
 | 證交所／櫃買開放資料 | 台股 | 免 | 股票清單、交易日曆、日 K、全市場單日行情、法人、本益比、月營收 |
 | FinMind | 台股 | 免費／Sponsor | 日 K 與還原股價、法人、營收、本益比、新聞、股權分散、期貨、融資；Sponsor 另有盤中即時快照、分 K、全市場資料與新聞、券商分點、全市場股權分散表、當沖盤前資料 |
 | 富果 Fugle | 台股 | 免費／付費 | 日 K、分 K；WebSocket 即時推播（盤中雷達、自訂提醒、當沖、五檔錄製） |
+| 台新證券 | 台股 | 台新帳號＋行情認證 | 盤中即時報價（Nova API 經 Node.js SDK 取得，逐檔行情查詢） |
 | Twelve Data | 12 個市場 | 免費／付費 | 股票清單、日 K、即時報價、分 K |
 | Alpha Vantage | 美、英、加、德、印 | 免費／付費 | 日 K、報價、新聞情緒、本益比、季營收 |
 
@@ -33,10 +34,19 @@
 - 所有 FinMind 請求共用同一條佇列並控制間隔；金鑰失效、額度用完或方案不足時，自動請求會暫停一段時間。
 - 金鑰由作業系統加密保存（Windows DPAPI、macOS 鑰匙圈、Linux Secret Service），網頁不會讀回。
 
+### 台新證券（Nova API）盤中即時報價
+
+台新證券提供 **Nova API**（台新行情 Web API／WebSocket），衡析改以 Node.js SDK（`taishin-sdk`）直接取得台股盤中即時報價：
+
+- 需完成台新數位 API 線上簽署與行情認證；尚未開通 API 者，首次登入時 SDK 會自動執行 `registerApiAuth` 程式認證。
+- 「資料與設定 → 資料來源」的台新證券欄位排成三列：第一列 `證券帳號`（身分證字號）與 `登入密碼`（台新證券登入密碼），第二列 `憑證檔案路徑`（憑證 e 管家匯出的 .pfx 檔路徑），第三列 `憑證密碼`（.pfx 憑證密碼）與「驗證並儲存」按鈕；標籤置於輸入框左側，尺寸比照其他資料源的金鑰欄位。登入密碼以 provider 金鑰加密保存，帳號與憑證路徑存於 `.local/config.json`。
+- 登入、API 認證與行情連線由 `EquiLens-Nexus/lib/providers/taishin.mjs` 經由 `taishin-sdk` 處理（Node.js 原生語言綁定，含 REST 行情查詢）。
+- 只提供盤中即時報價（熱浪圖、時光機、雷達、自訂提醒、當沖的盤中快照）；日 K、籌碼與新聞仍由其他資料源提供。
+
 ## 切換市場
 
 一套衡析一次研究一個市場。切換時，目前市場的族群、自選、提醒、行情與紀錄收進 `.local/markets/<市場>/`，切回來就恢復。
 
 ## 相關檔案
 
-`EquiLens-Nexus/lib/config.mjs`、`lib/providers/`、`lib/secrets.mjs`、`public/setup.js`、`public/prefs.js`；設定 `.local/config.json`、`.local/settings.json`。
+`EquiLens-Nexus/lib/config.mjs`、`lib/providers/`、`lib/secrets.mjs`、`public/setup.js`、`public/prefs.js`；台新證券行情由 `EquiLens-Nexus/lib/providers/taishin.mjs` 與 `EquiLens-Nexus/node_modules/taishin-sdk` 提供；設定 `.local/config.json`、`.local/settings.json`。
