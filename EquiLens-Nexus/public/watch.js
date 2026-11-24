@@ -382,7 +382,7 @@ document.addEventListener('click', async e => {
   }
   const b = e.target.closest('button'); if (!b || !C || C.page() !== 'watch') return; const ds = b.dataset;
   try {
-    if (ds.windicator) { openPicker(); return; }
+    if ('windicator' in ds) { openPicker(); return; }
     if (ds.wstudySettings) { openStudySettings(ds.wstudySettings); return; }
     if (ds.wstudyRemove) { removeStudy(ds.wstudyRemove); return; }
     if (ds.wperiod && PERIODS.includes(ds.wperiod) && ds.wperiod !== W.period) { W.period = ds.wperiod; savePref('nexus.watchPeriod', ds.wperiod); await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
