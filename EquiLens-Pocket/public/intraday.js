@@ -50,7 +50,7 @@ export function bookHTML(d) {
   const b = d.book; if (!b) return `<div class="empty">${d.source === 'replay' ? '這檔目前沒有即時五檔（未在即時推播訂閱中，或推播尚未連線）。' : '尚無五檔資料。'}</div>`;
   const rows = Array.from({ length: 5 }, (_, i) => { const bi = b.bids[i], as = b.asks[i];
     return `<div class="ia-row"><span class="num ia-size">${bi ? fmt(bi.size) : ''}</span><span class="num ${tone(bi?.price, d.ref)}">${bi ? fmt(bi.price, 2) : '—'}</span><span class="num ${tone(as?.price, d.ref)}">${as ? fmt(as.price, 2) : '—'}</span><span class="num ia-size">${as ? fmt(as.size) : ''}</span></div>`; }).join('');
-  const tot = b.bidTotal + b.askTotal, pb = tot ? b.bidTotal / tot * 100 : 50;
+  const sum = a => (a || []).reduce((n, l) => n + (l.size || 0), 0), bidTot = b.bidTotal ?? sum(b.bids), askTot = b.askTotal ?? sum(b.asks), tot = bidTot + askTot, pb = tot ? bidTot / tot * 100 : 50; // REST 五檔沒有總量時由各檔加總
   return `<div class="ia-book"><div class="ia-row ia-head"><span>委買量</span><span>買</span><span>賣</span><span>委賣量</span></div>${rows}
     <div class="ia-ratio"><i class="up-bg" style="width:${pb.toFixed(1)}%"></i><i class="down-bg" style="width:${(100 - pb).toFixed(1)}%"></i></div>
     <div class="ia-row ia-tot"><span class="num">(${fmt(b.bidTotal)})</span><span></span><span></span><span class="num">(${fmt(b.askTotal)})</span></div>
@@ -58,5 +58,5 @@ export function bookHTML(d) {
 }
 export function tapeHTML(d) {
   if (!d.tape?.length) return `<div class="empty">${d.source === 'stream' ? '尚無成交明細。' : '成交明細只在即時推播連線時提供。'}</div>`;
-  return `<div class="ia-tape"><div class="ia-trow ia-head"><span>時間</span><span>成交價</span><span>單量</span><span>內外盤</span></div>${d.tape.map(([t, px, size, side]) => `<div class="ia-trow"><span class="num">${esc(t)}</span><span class="num ${tone(px, d.ref)}">${fmt(px, 2)}</span><span class="num">${fmt(size)}</span><span class="${side > 0 ? 'up' : side < 0 ? 'down' : 'soft'}">${side > 0 ? '外盤' : side < 0 ? '內盤' : '—'}</span></div>`).join('')}</div>`;
+  return `<div class="ia-tape"><div class="ia-trow ia-head"><span>時間</span><span>買進價</span><span>賣出價</span><span>成交價</span><span>單量</span></div>${d.tape.map(([t, bid, ask, px, size, side]) => `<div class="ia-trow"><span class="num">${esc(t)}</span><span class="num">${bid ? fmt(bid, 2) : '—'}</span><span class="num">${ask ? fmt(ask, 2) : '—'}</span><span class="num ${side > 0 ? 'up' : side < 0 ? 'down' : ''}" title="${side > 0 ? '外盤' : side < 0 ? '內盤' : ''}">${fmt(px, 2)}</span><span class="num">${fmt(size)}</span></div>`).join('')}</div>`;
 }

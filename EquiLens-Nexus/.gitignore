@@ -2,3 +2,5 @@
 node_modules/
 *.zip
 dev/
+# 即時看盤的圖表元件：安裝時由 tools/fetch-vendor.mjs 下載，不進版控
+public/vendor/

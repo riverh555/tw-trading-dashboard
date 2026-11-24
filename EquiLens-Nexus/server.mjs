@@ -14,6 +14,7 @@ import { recordFrame, listDays, loadDay, compactReplay, replaySummary, resetRepl
 import { normalizeRadar, validRadarInput, createRadarState, seedRadarState, scanRadar } from './lib/radar.mjs';
 import { normalizeRule, createRuleState, scanPriceAlerts, ruleLabel, RULE_KINDS, MAX_RULES } from './lib/pricealerts.mjs';
 import { aggregateBrokers, brokerAnalysis, parseHolders, holderSignal, replayMinuteBars, fiveMinBars, dailyKRows, replayDayBar } from './lib/insight.mjs';
+import { toChartBars, validPeriod, PERIOD_MINUTES } from './lib/candles.mjs';
 import { buildReportContext, generateReport, normalizeReportSettings, overnightOutlook } from './lib/report.mjs';
 import { normalizeChipwatch, branchDay, brokerWatchAlerts, holderMarketDay, rankHolders, holderRankAlert, MAX_BRANCHES } from './lib/chipwatch.mjs';
 import { warrantMaster, branchWarrants, turnoverByTarget, stockWarrants, WARRANT_ID } from './lib/warrants.mjs';
@@ -519,7 +520,8 @@ async function intradayReport(id,groupId){
   const vw=vwapLine(s),lim=ref>0?limitPrices(p,ref):null,sum=a=>(a||[]).slice(0,5).reduce((n,l)=>n+(l.size||0),0);
   const last=q?.last??(rq?(rq.lastPrice??rq.closePrice):null)??s.c.at(-1)??null,t=rq?.total||{};
   const book=q?.book||(rq&&(rq.bids||rq.asks)?{bids:rq.bids||[],asks:rq.asks||[]}:null);
-  const tape=q?(q.tape||[]).slice().reverse().map(([at,px,size,side])=>[e.hmsOf(at),px,size,side]):(rest?.trades||[]).map(x=>[usHms(x.time),x.price,x.size,x.ask>0&&x.price>=x.ask?1:x.bid>0&&x.price<=x.bid?-1:0]);
+  // 成交明細：[時間, 買進價, 賣出價, 成交價, 單量, 內外盤]（買進價／賣出價為成交當下的最佳買賣價）
+  const tape=q?(q.tape||[]).slice().reverse().map(([at,px,size,side,bid,ask])=>[e.hmsOf(at),bid??null,ask??null,px,size,side]):(rest?.trades||[]).map(x=>[usHms(x.time),x.bid??null,x.ask??null,x.price,x.size,x.ask>0&&x.price>=x.ask?1:x.bid>0&&x.price<=x.bid?-1:0]);
   const hmOf=m=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
   return{id,name:uniIndex().meta.get(id)?.name||rq?.name||id,date,source,live:liveWindow()&&(source==='stream'?streamFresh():source==='rest'),open:p.open,close:p.close,ref,limitUp:lim?.up??null,limitDown:lim?.down??null,
     quote:{last,change:ref>0&&last>0?Math.round((last/ref-1)*1e4)/100:null,changePrice:ref>0&&last>0?Math.round((last-ref)*1e4)/1e4:null,open:q?.open??rq?.openPrice??s.c[0]??null,high:q?.high??rq?.highPrice??(s.c.length?Math.max(...s.c):null),low:q?.low??rq?.lowPrice??(s.c.length?Math.min(...s.c):null),
@@ -692,13 +694,23 @@ function sessionBar(id,date,bars5,daily=localDaily(id)){
   const own=daily.find(x=>x[0]===date);if(own)return own;
   const xs=bars5.filter(b=>b[0].startsWith(date));return xs.length?[date,xs[0][1],Math.max(...xs.map(b=>b[2])),Math.min(...xs.map(b=>b[3])),xs.at(-1)[4],xs.reduce((a,b)=>a+b[5],0)]:null;
 }
-// 5 分 K：最近三個有資料的交易日連續排列（20MA 需要前一日的資料才能從開盤就畫出）
-async function chart5m(id){
-  const d=today(),dates=(await tradingDates()).filter(x=>x<=d).slice(-5),days=[];let error='';
-  for(const date of dates){const m=await minuteRows(id,date);if(m.error)error=m.error;if(m.rows.length)days.push({date,source:m.source,bars:fiveMinBars(m.rows,{start:m.start})});}
-  const use=days.slice(-3);if(!use.length&&error)throw new UserError(error);
-  const daily=localDaily(id),bars=use.flatMap(x=>x.bars.map(b=>[`${x.date} ${b[0]}`,...b.slice(1)])),last=use.at(-1)?.date;
-  return{bars,days:use.map(x=>({date:x.date,source:x.source,prev:prevCloseOf(id,x.date,daily)})),session:last?sessionBar(id,last,bars,daily):null,notice:error&&use.some(x=>x.source==='replay')?t('{error}；已改用本機時光機紀錄',{error}):''};
+// 分 K：最近幾個交易日連續排列（1m/3m/5m/15m 取 3 日；60m 取 10 日，湊足 MA20 所需根數）。
+// 3m 當天由 1m 合成（盤中 API 沒有 3m）；過去日期同樣由 1m 合成，沿用既有快取。
+async function chartIntraday(id, minutes) {
+  const d = today(), n = minutes >= 60 ? 10 : 3, dates = (await tradingDates()).filter(x => x <= d).slice(-(n + 2)), days = []; let error = '';
+  for (const date of dates) { const m = await minuteRows(id, date); if (m.error) error = m.error; if (m.rows.length) days.push({ date, source: m.source, bars: fiveMinBars(m.rows, { start: m.start, size: minutes }) }); }
+  const use = days.slice(-n); if (!use.length && error) throw new UserError(error);
+  const daily = localDaily(id), bars = use.flatMap(x => x.bars.map(b => [`${x.date} ${b[0]}`, ...b.slice(1)])), last = use.at(-1)?.date;
+  return { bars, days: use.map(x => ({ date: x.date, source: x.source, prev: prevCloseOf(id, x.date, daily) })), session: last ? sessionBar(id, last, bars, daily) : null, notice: error && use.some(x => x.source === 'replay') ? t('{error}；已改用本機時光機紀錄', { error }) : '' };
+}
+async function chartReport(id, period) {
+  const info = boardData([id]).stocks[0], result = period === 'day' ? await chartDay(id) : await chartIntraday(id, PERIOD_MINUTES[period] || 5);
+  return { id, name: info.name, sector: info.sector, score: info.score, period, prev: info.prev, quote: info.quote, daily: info.daily, inScope: inScope(id), live: !!lastSnap && liveWindow(), stream: false, asOf: lastSnap?.asOf || null, ...result };
+}
+// 即時看盤：個股即時走勢＋指定週期 K 線＋加權指數（K 線已換成圖表可用的時間格式；成交明細為 [時間, 買進價, 賣出價, 成交價, 單量, 內外盤]）
+async function watchReport(id, period) {
+  const [intra, chart, index] = await Promise.all([intradayReport(id, ''), chartReport(id, period), indexReport('TAIEX')]);
+  return { ...intra, period, bars: toChartBars(chart.bars), chartDays: chart.days, session: chart.session, indexBars: toChartBars((index.daily || []).slice(-60)), indexQuote: index.quote, indexRef: index.ref, indexName: index.name };
 }
 // 日 K：研究名單內用本機日成交資料（不還原），其他股票或本機資料過舊時向資料源取近 240 天並快取；
 // 當日最後一根以即時快照組成（盤後沒有快照時用時光機畫格近似）。
@@ -720,11 +732,6 @@ async function chartDay(id){
   if(bar)rows=[...rows,bar];
   return{bars:rows.slice(-160),today:bar?bar[0]:null,session:rows.at(-1)||null};
 }
-async function chartReport(id,period){
-  const info=boardData([id]).stocks[0],result=period==='day'?await chartDay(id):await chart5m(id);
-  return{id,name:info.name,sector:info.sector,score:info.score,period,prev:info.prev,quote:info.quote,daily:info.daily,inScope:inScope(id),live:!!lastSnap&&liveWindow(),stream:false,asOf:lastSnap?.asOf||null,...result};
-}
-
 /* ---------- 籌碼追蹤：分點追蹤、大戶集中度排行 ---------- */
 const chipSettings=()=>normalizeChipwatch(settings.chipwatch);
 const chipCapable=()=>{try{finmind('brokers');return true;}catch{return false;}};
@@ -1269,7 +1276,10 @@ function importBundle(b,parts){
 }
 
 /* ---------- HTTP ---------- */
-const STATIC = { '/':'index.html', '/app.js':'app.js', '/heatmap.js':'heatmap.js', '/briefing.js':'briefing.js','/flow-cards.js':'flow-cards.js', '/live.js':'live.js', '/insight-ui.js':'insight-ui.js', '/report-card.js':'report-card.js', '/save-image.js':'save-image.js', '/prefs.js':'prefs.js', '/grouprank.js':'grouprank.js', '/i18n.js':'i18n.js', '/setup.js':'setup.js', '/market.js':'market.js', '/daytrade.js':'daytrade.js', '/intraday.js':'intraday.js', '/chipwatch.js':'chipwatch.js', '/hud.css':'hud.css', '/favicon.svg':'favicon.svg' };
+// public/vendor 下的圖表元件（Lightweight Charts 等）：開機時掃描一次列入靜態白名單；路徑由實際檔案產生，不接受任意路徑
+// vendor 目錄不進版控（安裝時由 tools/fetch-vendor.mjs 下載），尚未下載時掃描為空，伺服器照常啟動
+const vendorStatic = () => { const out = {}, root = path.join(ROOT, 'public', 'vendor'); const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.m?js$/.test(e.name)) { const rel = path.relative(path.join(ROOT, 'public'), p).split(path.sep).join('/'); out['/' + rel] = rel; } } } catch { } }; walk(root); return out; };
+const STATIC = { '/':'index.html', '/app.js':'app.js', '/heatmap.js':'heatmap.js', '/briefing.js':'briefing.js','/flow-cards.js':'flow-cards.js', '/live.js':'live.js', '/watch.js':'watch.js', '/insight-ui.js':'insight-ui.js', '/report-card.js':'report-card.js', '/save-image.js':'save-image.js', '/prefs.js':'prefs.js', '/grouprank.js':'grouprank.js', '/i18n.js':'i18n.js', '/setup.js':'setup.js', '/market.js':'market.js', '/daytrade.js':'daytrade.js', '/intraday.js':'intraday.js', '/chipwatch.js':'chipwatch.js', '/hud.css':'hud.css', '/favicon.svg':'favicon.svg', ...vendorStatic() };
 // 舊版模組丟出的一般錯誤（尚未改成 UserError）中，可以直接顯示的訊息
 const LEGACY_MESSAGE=/FinMind|金鑰|股票|族群|設定|格式|請|更新|無效|內容|行情|休市|公布|日期|查無|日報|雷達|時光機|畫格|分組|自選/;
 const server = http.createServer(async (req,res) => {
@@ -1474,9 +1484,14 @@ const server = http.createServer(async (req,res) => {
       return json(res,200,await indexReport(id));
     }
     if(route==='/api/chart'&&req.method==='GET'){
-      const id=url.searchParams.get('id'),period=url.searchParams.get('period')==='day'?'day':'5m';
+      const id=url.searchParams.get('id'),period=validPeriod(url.searchParams.get('period'))?url.searchParams.get('period'):'5m';
       if(!validId(id))throw new UserError('股票代碼格式錯誤');
       return json(res,200,await once(`c:${id}:${period}`,()=>chartReport(id,period)));
+    }
+    if(route==='/api/watch'&&req.method==='GET'){
+      const id=url.searchParams.get('id'),period=validPeriod(url.searchParams.get('period'))?url.searchParams.get('period'):'5m';
+      if(!validId(id))throw new UserError('股票代碼格式錯誤');
+      return json(res,200,await once(`w:${id}:${period}`,()=>watchReport(id,period)));
     }
     if(route==='/api/brokers'&&req.method==='GET'){
       const id=url.searchParams.get('id'),n=Math.min(10,Math.max(2,Number(url.searchParams.get('days')||5)));
@@ -1643,7 +1658,7 @@ const server = http.createServer(async (req,res) => {
     // 遠端經 Cloudflare 時 js／css 會被快取 4 小時：頁面與模組 import 一律加上版本號（public 檔案修改時間雜湊）
     let content = fs.readFileSync(path.join(ROOT,'public',file));
     if (file==='index.html') content = content.toString('utf8').replace(/(\/(?:app\.js|hud\.css))"/g,`$1?v=${frontBuild()}"`).replace(/<html lang="[^"]*"/, `<html lang="${language()}"`);
-    else if (file.endsWith('.js')) content = content.toString('utf8').replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(\.\/[\w-]+\.js)\2/g,`$1$2$3?v=${frontBuild()}$2`);
+    else if (file.endsWith('.js') && !file.startsWith('vendor/')) content = content.toString('utf8').replace(/(\bfrom\s*|\bimport\s*\(\s*)(['"])(\.\/[\w-]+\.js)\2/g,`$1$2$3?v=${frontBuild()}$2`); // vendor 元件不改寫（內容已固定版本，避免誤改 19MB 的指標包）
     res.writeHead(200,{ 'Content-Type':file.endsWith('.html')?'text/html; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.svg')?'image/svg+xml':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'no-cache' }); res.end(content);
   } catch(e) {
     const shown = isUserError(e) ? e.message : e instanceof Error && LEGACY_MESSAGE.test(e.message) ? e.message : t('操作失敗，請稍後再試');

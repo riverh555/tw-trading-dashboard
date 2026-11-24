@@ -105,7 +105,7 @@ export function createDayTrade({ market: p, date, ids, meta = new Map(), watch =
         s.cumAmt += px * size * lot; s.vNum += px * size; s.vDen += size;
         const side = ev.ask > 0 && px >= ev.ask ? 1 : ev.bid > 0 && px <= ev.bid ? -1 : 0;
         if (side > 0) { s.atAsk += size; b.ask += size; } else if (side < 0) { s.atBid += size; b.bid += size; }
-        s.tape.push([ev.time, px, size, side]); if (s.tape.length > 80) s.tape.splice(0, s.tape.length - 60); // 最近成交明細（看板個股走勢用）
+        s.tape.push([ev.time, px, size, side, ev.bid ?? null, ev.ask ?? null]); if (s.tape.length > 80) s.tape.splice(0, s.tape.length - 60); // 最近成交明細（看板個股走勢用；買進價／賣出價為成交當下的最佳買賣價）
         s.limitUp = !!ev.limitUp; s.halted = !!ev.halted;
       } else if (ev.kind === 'book') { // 五檔只供看板與個股走勢顯示，不參與訊號
         if (ev.time <= s.bookAt) continue;

@@ -4,6 +4,7 @@ import { initBriefing, briefPage, mountBriefing } from './briefing.js';
 import { getPrefs, setPrefs, prefsPanel, DEFAULTS as PREF_DEFAULTS } from './prefs.js';
 import { initGroupRank, groupRankPage, enterGroupRank } from './grouprank.js';
 import { initLive, livePage, enterLive, detailExtrasShell, fillDetailExtras, reportPanel, claudeSettings, newsSettings, openChart } from './live.js';
+import { initWatch, watchPage, enterWatch } from './watch.js';
 import { initSetup, setupWizard, systemSettings } from './setup.js';
 import { initChipwatch, chipPage, enterChips } from './chipwatch.js';
 import { setLanguage } from './i18n.js';
@@ -23,6 +24,7 @@ const PAGES = {
   heatmap: { title: '資金熱浪', eyebrow: 'Market Pulse · Sector Heatmap', sub: '當日資金流向：面積為成交金額、顏色為漲跌幅，依產業別切分板塊（資料源沒有全市場行情時以研究族群為範圍）。' },
   grouprank: { title: '族群排名', eyebrow: 'Sector Strength Ranking', sub: '研究總覽各族群的盤中漲幅排名：排除低量個股並以 √成交金額加權，避免冷門股或單一權值股造成失真；隔日標示名次變動。' },
   live: { title: '盤中雷達', eyebrow: 'Intraday Radar · Live Board', sub: '盤中定時掃描即時行情：族群與自選股即時走勢、爆量與急拉急殺、漲跌停與型態進場提醒，手機同步推播。' },
+  watch: { title: '即時看盤', eyebrow: 'Live Watch · Real-time Board', sub: '自選即時行情：K 線、五檔、成交明細與加權指數，盤中每 3 秒更新。' },
   overview: { title: '研究總覽', eyebrow: 'Research Matrix', sub: '從趨勢到證據，找到值得深入研究的公司。' },
   sectors: { title: '市場族群', eyebrow: 'Custom Groups', sub: '依你的族群分類研究，保留檔案順序與跨族群歸屬。' },
   patterns: { title: '型態選股', eyebrow: 'Pattern Scanner · 90 Sessions', sub: '90 個交易日，看見價格結構、確認訊號與風險邊界。' },
@@ -38,6 +40,7 @@ const ICONS = {
   heatmap: '<rect x="3" y="3" width="10" height="11"/><rect x="15" y="3" width="6" height="6"/><rect x="15" y="11" width="6" height="10"/><rect x="3" y="16" width="10" height="5"/>',
   grouprank: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/><path d="M15 5l3-2 3 2"/>',
   live: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12l6-4"/>',
+  watch: '<path d="M6 4v16M18 4v16"/><rect x="4" y="7" width="4" height="6"/><rect x="16" y="10" width="4" height="6"/>',
   overview: '<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',
   sectors: '<circle cx="7" cy="7" r="3"/><circle cx="17" cy="7" r="3"/><circle cx="7" cy="17" r="3"/><circle cx="17" cy="17" r="3"/>',
   patterns: '<path d="M3 17l5-6 4 3 4-8 5 5"/><path d="M3 21h18"/>',
@@ -52,7 +55,7 @@ const ICONS = {
 const navAllowed = k => (k !== 'flows' || !!state?.capabilities?.flows) && (k !== 'chips' || !!state?.capabilities?.brokers);
 const PROVIDER_NAMES = { finmind: 'FinMind', twse: 'TWSE / TPEx', fugle: 'Fugle', twelvedata: 'Twelve Data', alphavantage: 'Alpha Vantage' };
 const dataSources = () => [...new Set(Object.values(state.capabilities || {}).filter(Boolean))].map(id => PROVIDER_NAMES[id] || id).join(' / ') || '—';
-const NAV = [['TODAY', ['home']], ['MARKET', ['heatmap', 'live', 'grouprank']], ['RESEARCH', ['overview', 'sectors', 'patterns', 'flows', 'chips', 'topics', 'watchlist']], ['SYSTEM', ['method', 'settings']]];
+const NAV = [['TODAY', ['home']], ['MARKET', ['heatmap', 'live', 'watch', 'grouprank']], ['RESEARCH', ['overview', 'sectors', 'patterns', 'flows', 'chips', 'topics', 'watchlist']], ['SYSTEM', ['method', 'settings']]];
 // 衡析標誌：圓角六角形＋上升折線（深色主題：電光青六角形、深墨折線；淺色主題反轉，見 hud.css 的 --mark-hex／--mark-line）
 const BRAND = `<svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true"><polygon class="mk-hex" points="50,10 84.64,30 84.64,70 50,90 15.36,70 15.36,30" stroke-width="10" stroke-linejoin="round"/><polyline class="mk-line" points="28,67 44,50 56,60 74,34" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
@@ -75,10 +78,11 @@ initHeatmap({ api, toast, state: () => state, inScope, openStock: id => openChar
 initBriefing({ esc, toast, state: () => state });
 initGroupRank({ api, toast, redraw: () => draw(), page: () => page, openStock: id => openChart(id, 'live'), inScope, esc });
 initLive({ api, toast, state: () => state, redraw: () => draw(), page: () => page, openStock: id => openStock(id), inScope, setPage: p => setPage(p), reload: () => load() });
+initWatch({ api, toast, state: () => state, redraw: () => draw(), page: () => page, inScope });
 initChipwatch({ api, toast, page: () => page });
 initSetup({ api, toast, state: () => state, reload: () => load(), redraw: () => draw(), page: () => page, esc });
 
-function setPage(p) { if (['settings', 'topics'].includes(page)) saveDrafts(); page = p; index = 0; $('.sidebar')?.classList.remove('open'); draw(); window.scrollTo(0, 0); if (p === 'patterns') loadPatterns(); if (p === 'live') enterLive(); if (p === 'grouprank') enterGroupRank(); if (p === 'chips') enterChips(); }
+function setPage(p) { if (['settings', 'topics'].includes(page)) saveDrafts(); page = p; index = 0; $('.sidebar')?.classList.remove('open'); draw(); window.scrollTo(0, 0); if (p === 'patterns') loadPatterns(); if (p === 'live') enterLive(); if (p === 'watch') enterWatch(); if (p === 'grouprank') enterGroupRank(); if (p === 'chips') enterChips(); }
 
 /* ---------- market clock ---------- */
 function twNow() { return MK.parts(); }
@@ -104,7 +108,7 @@ function draw() {
   <div class="top-tools"><label class="searchbox"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="search" type="search" placeholder="搜尋研究名單代碼或名稱" aria-label="搜尋股票代碼或名稱" value="${esc(query)}"><kbd>/</kbd></label><button class="ghost" data-live="pip" aria-label="浮動雷達視窗" title="浮動雷達視窗（永遠置頂）">📡</button><button class="ghost" data-page="settings" aria-label="設定" title="資料與設定">⚙</button></div></header>
   <main class="main" id="main"><div class="pagehead"><div><p class="eyebrow">${info.eyebrow}</p><h1>${info.title}</h1><p class="subtitle">${info.sub}</p></div><div class="actions">${page === 'overview' ? '<button data-action="new-group">＋ 新增族群</button>' : ''}${page === 'overview' || page === 'watchlist' ? `<button data-action="export">↓ 匯出清單</button><button class="primary" data-action="update" ${state.job.running ? 'disabled' : ''}>⟳ 更新${page === 'watchlist' ? '自選' : '資料'}</button>` : ''}</div></div>
   ${jobBanner()}${page !== 'settings' && !state.dataConfigured ? `<div class="notice warn"><span>尚未設定資料來源。目前僅顯示已取得的資料。</span><button data-page="settings">設定資料來源 →</button></div>` : ''}${state.scopeError ? `<div class="notice warn"><span>${esc(state.scopeError)}</span></div>` : ''}
-  <div id="pagecontent">${({ home: () => reportPanel() + briefPage(), heatmap: heatPage, live: livePage, grouprank: groupRankPage, flows: flowPage, chips: chipPage, patterns: patternPage, overview, watchlist: overview, sectors: groupPage, topics, settings, method })[page]()}</div>
+  <div id="pagecontent">${({ home: () => reportPanel() + briefPage(), heatmap: heatPage, live: livePage, watch: watchPage, grouprank: groupRankPage, flows: flowPage, chips: chipPage, patterns: patternPage, overview, watchlist: overview, sectors: groupPage, topics, settings, method })[page]()}</div>
   <footer class="footer"><span>DATA · <span translate="no">${esc(dataSources())}</span> · 各欄位以原始日期為準 · MODEL v${esc(state.version)} · APP v${esc(state.appVersion || '2.0.0')}</span><span>研究排序工具 · 分數不等於報酬率或合理股價 · 非交易建議</span></footer></main></div></div>`;
   restoreDrafts(); tick();
   if (activeId) { const el = document.getElementById(activeId); if (el && el !== document.body && ['search', 'heat-search', 'pattern-search'].includes(activeId)) { el.focus(); try { el.setSelectionRange(selection, selection); } catch { } } }
