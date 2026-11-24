@@ -12,6 +12,17 @@ const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { re
 const PERIODS = ['1m', '3m', '5m', '15m', '60m', 'day'];
 const PERIOD_LABEL = { '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '60m': '60分', day: '日K' };
 const UP = '#ff3d5a', DOWN = '#16e38b', MA5C = '#f0b90b', MA20C = '#22e6ff', DIFC = '#2962ff', DEAC = '#ff6d00';
+// 圖表軸與游標標籤一律用台北時區：LWC 預設 UTC，日 K 的台北 00:00 會被顯示成前一天
+const TW_TZ = 'Asia/Taipei';
+const twDate = t => typeof t === 'number' ? new Date(t * 1000) : new Date(`${t}T00:00:00+08:00`);
+const twTick = (time, type) => {
+  const d = twDate(time), o = { timeZone: TW_TZ };
+  if (type === 0) return d.toLocaleString('zh-TW', { ...o, year: 'numeric' });
+  if (type === 1) return d.toLocaleString('zh-TW', { ...o, month: 'short' });
+  if (type === 2) return d.toLocaleString('zh-TW', { ...o, day: 'numeric' });
+  return d.toLocaleString('zh-TW', { ...o, hour12: false, hour: '2-digit', minute: '2-digit' });
+};
+const twFull = t => twDate(t).toLocaleString('zh-TW', { timeZone: TW_TZ, hour12: false });
 const W = {
   id: null, period: pref('nexus.watchPeriod', '5m'), group: pref('nexus.watchGroup', ''), query: '',
   board: null, data: null, error: '', lib: null, libError: '',
@@ -24,7 +35,7 @@ export function initWatch(ctx) { C = ctx; }
 
 // 日 K 標籤是 'YYYY-MM-DD' 字串；指標計算需要數字時間，統一換成台北時間的 epoch 秒數
 const numBars = bars => (bars || []).map(b => ({ time: typeof b.time === 'number' ? b.time : Math.floor(Date.parse(`${b.time}T00:00:00+08:00`) / 1000), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }));
-const barLabel = b => b ? `${typeof b.time === 'number' ? new Date(b.time * 1000).toISOString().slice(0, 10) : b.time}　開 ${fmt(b.open, 2)}　高 ${fmt(b.high, 2)}　低 ${fmt(b.low, 2)}　收 ${fmt(b.close, 2)}` : '';
+const barLabel = b => b ? `${typeof b.time === 'number' ? new Date(b.time * 1000).toLocaleDateString('sv-SE', { timeZone: TW_TZ }) : b.time}　開 ${fmt(b.open, 2)}　高 ${fmt(b.high, 2)}　低 ${fmt(b.low, 2)}　收 ${fmt(b.close, 2)}` : '';
 
 let boardBusy = null;
 async function loadBoard() { if (boardBusy) return boardBusy; boardBusy = (async () => { try { W.board = await C.api('board?group=watch'); } catch (e) { W.error = e.message; } })().finally(() => { boardBusy = null; }); return boardBusy; }
@@ -107,9 +118,9 @@ function buildMainChart() {
     layout: { background: { type: lwc.ColorType.Solid, color: '#03060c' }, textColor: '#8fa3b8', fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
     grid: { vertLines: { color: 'rgba(148,163,184,.07)' }, horzLines: { color: 'rgba(148,163,184,.07)' } },
     crosshair: { mode: lwc.CrosshairMode.Normal },
-    timeScale: { timeVisible: true, secondsVisible: false, borderColor: 'rgba(148,163,184,.25)' },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: 'rgba(148,163,184,.25)', tickMarkFormatter: twTick },
     rightPriceScale: { borderColor: 'rgba(148,163,184,.25)' },
-    localization: { locale: 'zh-TW' },
+    localization: { locale: 'zh-TW', timeFormatter: twFull },
   });
   const candles = chart.addSeries(lwc.CandlestickSeries, { upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN, borderVisible: false });
   const S = { candles };
@@ -355,9 +366,9 @@ function buildIdxChart() {
     width: el.clientWidth || 340, height: 150,
     layout: { background: { type: lwc.ColorType.Solid, color: '#03060c' }, textColor: '#8fa3b8', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
     grid: { vertLines: { color: 'rgba(148,163,184,.07)' }, horzLines: { color: 'rgba(148,163,184,.07)' } },
-    timeScale: { timeVisible: false, borderColor: 'rgba(148,163,184,.25)' },
+    timeScale: { timeVisible: false, borderColor: 'rgba(148,163,184,.25)', tickMarkFormatter: twTick },
     rightPriceScale: { borderColor: 'rgba(148,163,184,.25)' },
-    localization: { locale: 'zh-TW' },
+    localization: { locale: 'zh-TW', timeFormatter: twFull },
   });
   const s = chart.addSeries(lwc.CandlestickSeries, { upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN, borderVisible: false });
   s.setData(numBars(W.data.indexBars));

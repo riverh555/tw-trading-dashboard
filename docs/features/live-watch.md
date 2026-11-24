@@ -23,7 +23,7 @@
 - 後端 `/api/watch?id=<代號>&period=<週期>` 一次回傳個股當日走勢、指定週期 K 線、五檔、成交明細與加權指數報價／日 K；五檔與成交明細沿用盤中雷達的同一份現場資料。
 - `/api/chart` 由原本只支援日 K／5 分 K 擴充為 1m／3m／5m／15m／60m／day（非法值退回 5m）。3 分 K 由 1 分 K 合成；15 分以內取最近 3 個交易日，60 分取 10 個交易日，足夠計算 MA20。
 - 盤中每 3 秒更新報價、五檔、成交明細與最後一根 K 棒；自選橫條每 10 秒更新。頁面不在前景或休市時不輪詢。
-- 圖表由 Lightweight Charts 5.3.0（Apache-2.0）繪製，均線與 MACD 由 lightweight-charts-indicators 0.26.4（MIT）計算，搭配 oakscriptjs 0.19.0（MIT）與 fancy-canvas 2.1.0（MIT）；以 ESM importmap 載入，模組檔放在 `public/vendor/`，不連外部 CDN。伺服器的 Content Security Policy 以 importmap 內容 hash 允許這段必要的 inline script，不放寬 `unsafe-inline`。
+- 圖表由 Lightweight Charts 5.3.0（Apache-2.0）繪製，均線與 MACD 由 lightweight-charts-indicators 0.26.4（MIT）計算，搭配 oakscriptjs 0.19.0（MIT）與 fancy-canvas 2.1.0（MIT）；以 ESM importmap 載入，模組檔放在 `public/vendor/`，不連外部 CDN。伺服器的 Content Security Policy 以 importmap 內容 hash 允許這段必要的 inline script，不放寬 `unsafe-inline`。圖表軸與游標標籤統一以台北時區格式化，日 K 不會因 UTC 換算而差一天。
 
 ## 設定
 
