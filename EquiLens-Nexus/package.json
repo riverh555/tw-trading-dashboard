@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@fugle/marketdata": "^1.8.0",
     "taishin-sdk": "https://ml-fugle-api.tssco.com.tw/FugleSDK/sdk/taishin-sdk-1.0.2.tgz"
   },
   "license": "MIT"
