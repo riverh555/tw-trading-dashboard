@@ -72,6 +72,7 @@ let replayCache={key:'',data:null},boardGroupCache={key:'',data:null},calendarCa
 let grLive={at:0,data:null},grAttempt={date:'',at:0};
 let newsState=null,newsBusy=false,newsPauseUntil=0,newsStatus={at:0,error:'',found:0,seeded:false};
 let reportError='',reportAttempt={date:'',n:0,at:0};
+const kbarLive=new Map(); // 今日盤中向資料源取的 1 分 K（短 TTL，不寫檔，避免凍結在舊資料）
 const kbarMiss=new Map(); // 資料源尚無分 K 的「股票:日期」，10 分鐘內不重查
 let kbarDenied={until:0,error:''}; // 金鑰或方案不足時 1 小時內不再請求分 K，直接用時光機
 setInterval_('finmind',settings.interval);
@@ -89,7 +90,7 @@ function loadMarketState(){
   job=read('last-job.json',null)||idleJob();if(job.running)job={...job,running:false,message:t('上次更新中斷，可重新執行續傳')};
   liveHeat=null;lastSnap=null;monitorPauseUntil=0;monitorError='';radarState=null;radarPlans={at:0,map:new Map()};alertsBox={date:'',list:[]};
   replayCache={key:'',data:null};boardGroupCache={key:'',data:null};calendarCache={date:'',dates:[]};heatSummaryCache=null;grLive={at:0,data:null};grAttempt={date:'',at:0};
-  newsState=null;newsStatus={at:0,error:'',found:0,seeded:false};newsPauseUntil=0;kbarMiss.clear();priceRules=read('price-alerts.json',[]).filter(r=>r&&RULE_KINDS.includes(r.kind)&&validId(r.stockId));ruleState=null;kbarDenied={until:0,error:''};
+  newsState=null;newsStatus={at:0,error:'',found:0,seeded:false};newsPauseUntil=0;kbarMiss.clear();kbarLive.clear();priceRules=read('price-alerts.json',[]).filter(r=>r&&RULE_KINDS.includes(r.kind)&&validId(r.stockId));ruleState=null;kbarDenied={until:0,error:''};
   if(stream){stream.close();stream=null;}streamRows=new Map();streamBars=new Map();streamDate='';streamAsOf='';streamState={...streamState,connected:false};
   if(bookRec){bookRec.close();bookRec=null;}bookDay={date:''};
   dtHistory.reset();subscribedIds=new Set();dt=null;dtMeta=new Map();dtSaved='';dtFallback='';{const p=read('daytrade-prep.json',null);dtPrep={date:p?.date||'',busy:false,data:p,at:0};}
@@ -675,26 +676,42 @@ async function holderReport(id){
   const result={series,signal:holderSignal(series)};fs.mkdirSync(path.join(LOCAL,'holders'),{recursive:true});write(name,{at:Date.now(),data:result});return result;
 }
 // 個股 K 線：日 K／5 分 K，列格式 [日期或時間, 開, 高, 低, 收, 量（顯示單位）]；5MA、20MA 由前端依完整序列計算。
-// 一分 K：已收盤的交易日用資料源的分 K（存檔後不再請求）；盤中（或資料源尚未公布）改用時光機畫格＋最新快照，不額外請求。
+// 一分 K：已收盤的交易日用資料源的分 K（存檔後不再請求）；盤中先用時光機／推播／快照，
+// 都沒有時改問資料源的盤中 1 分 K（短 TTL 快取，不寫檔），避免只顯示前一交易日的舊快取。
 const tickLabel=d=>{const m=/(\d{2}):(\d{2}):(\d{2})/.exec(String(d||''));if(!m)return'';const x=Number(m[1])*60+Number(m[2])+(Number(m[3])>0?1:0);return`${String(Math.floor(x/60)).padStart(2,'0')}:${String(x%60).padStart(2,'0')}`;};
 async function minuteRows(id,date){
-  const name=`kbar/${id}-${date}.json`,cached=read(name,null);if(cached?.bars?.length)return{rows:cached.bars,start:true,source:cached.source||'finmind'};
-  const key=`${id}:${date}`,x=clock(),intraday=date===x.date&&(liveWindow()||x.minute<M().close+30);let error='';
-  if(data.has('intraday')&&!intraday&&Date.now()>kbarDenied.until&&Date.now()-(kbarMiss.get(key)||0)>10*60e3){
+  const key=`${id}:${date}`,x=clock(),isToday=date===x.date,live=isToday&&(liveWindow()||x.minute<M().close+30),name=`kbar/${id}-${date}.json`;
+  let error='',rows=[],source='none',start=false;
+  // 已收盤日的檔案快取；今日不讀檔，避免盤中一直看到舊資料
+  if(!isToday){const cached=read(name,null);if(cached?.bars?.length)return{rows:cached.bars,start:true,source:cached.source||'finmind'};}
+  // 已收盤日或非盤中時，先向資料源要歷史分 K 並存檔
+  if(data.has('intraday')&&!live&&Date.now()>kbarDenied.until&&Date.now()-(kbarMiss.get(key)||0)>10*60e3){
     try{
-      const bars=await data.intraday(id,date),source=data.source('intraday');
-      if(bars.length){fs.mkdirSync(path.join(LOCAL,'kbar'),{recursive:true});write(name,{date,source,bars});return{rows:bars,start:true,source};}
+      const bars=await data.intraday(id,date),src=data.source('intraday');
+      if(bars.length){if(!isToday){fs.mkdirSync(path.join(LOCAL,'kbar'),{recursive:true});write(name,{date,source:src,bars});}return{rows:bars,start:true,source:src};}
     }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+3600e3,error};}
     kbarMiss.set(key,Date.now());
   }
   if(!error&&Date.now()<kbarDenied.until)error=kbarDenied.error;
+  // 本機時光機畫格＋最新報價（快照或推播取較新者）
   const day=loadDay(date),r=liveRow(id,date),tl=r?tickLabel(r.date):'';
   const tick=tl?{t:tl,close:Number(r.close),volume:Number(r.total_volume),amount:Number(r.total_amount),high:Number(r.high),low:Number(r.low)}:null;
-  let rows=day||tick?replayMinuteBars(day,id,{open:r?Number(r.open):null,tick}):[];
-  let source=rows.length?'replay':'none';
+  if(day||tick){rows=replayMinuteBars(day,id,{open:r?Number(r.open):null,tick});source='replay';}
   // 快照監控不可用時，用 WebSocket 逐筆累積的 1 分 K；推播資料比單一快照畫格更完整
-  if(date===today()){const sb=streamBars.get(`${id}:${date}`);if(sb?.rows?.length>rows.length){rows=sb.rows.map(x=>x.slice());source='stream';}}
-  return{rows,start:false,source,error};
+  if(isToday){const sb=streamBars.get(key);if(sb?.rows?.length>rows.length){rows=sb.rows.map(a=>a.slice());source='stream';}}
+  // 今日盤中仍沒有任何 1 分 K：直接問資料源（例如 Fugle 的 /intraday/candles），短 TTL 避免每 3 秒打一次
+  if(isToday&&!rows.length){
+    const cachedLive=kbarLive.get(key);
+    if(cachedLive&&Date.now()-cachedLive.at<15000){rows=cachedLive.bars;source=cachedLive.source;start=true;}
+    else if(data.has('intraday')&&Date.now()>kbarDenied.until&&Date.now()-(kbarMiss.get(key)||0)>10*60e3){
+      try{
+        const bars=await data.intraday(id,date);
+        if(bars.length){rows=bars;source=data.source('intraday');start=true;kbarLive.set(key,{at:Date.now(),bars,source});}
+        else kbarMiss.set(key,Date.now());
+      }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+3600e3,error};kbarMiss.set(key,Date.now());}
+    }
+  }
+  return{rows,start,source:rows.length?source:'none',error};
 }
 // 本機日 K（研究名單日成交，或先前查過的非名單個股快取），供昨收與當日開高低收使用，不發請求
 const localDaily=id=>{const s=market().stocks.find(x=>x.id===id);return s?.bars?.length?dailyKRows(s.bars):read(`daily/${id}.json`,null)?.rows||[];};
