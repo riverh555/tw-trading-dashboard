@@ -192,7 +192,8 @@ function yesterdayVolume(id,date){
   if(!yvCache.map.has(id)){let v=Number(lastSnap?.byId.get(id)?.yesterday_volume);if(!(v>0)){const d=localDaily(id).filter(r=>r[0]<date).at(-1);v=d?Number(d[5]):0;}yvCache.map.set(id,v>0?v:null);}
   return yvCache.map.get(id);
 }
-function onStreamRows(rows){
+// r.high／r.low：聚合行情列是「當分鐘」高低點，可直接用；引擎快照列是「當日」高低點，混進分鐘 K 會把日高／日低寫成當分鐘高低
+function onStreamRows(rows,{dayRange=false}={}){
   const date=today(),fresh=rows.filter(r=>String(r.date).slice(0,10)===date);
   if(streamDate!==date){streamDate=date;streamRows=new Map();streamBars=new Map();streamAsOf='';}
   for(const r of fresh){
@@ -202,7 +203,7 @@ function onStreamRows(rows){
     const key=`${r.stock_id}:${date}`;let sb=streamBars.get(key);
     if(!sb){sb={rows:[],last:0};streamBars.set(key,sb);}
     const t=String(r.date).slice(11,16),vol=Number(r.total_volume)||0,dv=Math.max(0,vol-sb.last);sb.last=vol;
-    const row=sb.rows.find(x=>x[0]===t),hi=Number(r.high)||c,lo=Number(r.low)||c;
+    const row=sb.rows.find(x=>x[0]===t),hi=dayRange?c:(Number(r.high)||c),lo=dayRange?c:(Number(r.low)||c);
     if(row){row[2]=Math.max(row[2],c,hi);row[3]=Math.min(row[3],c,lo);row[4]=c;row[5]+=dv;}
     else{const prev=sb.rows.at(-1);sb.rows.push([t,prev?prev[4]:(Number(r.open)||c),Math.max(c,hi),Math.min(c,lo),c,dv]);}
     if(sb.rows.length>600)sb.rows.splice(0,sb.rows.length-600);
@@ -280,7 +281,7 @@ function onStreamStatus(s){
 function onStreamEvents(all){
   const ex=bookDay.extraSet,events=ex?.size?all.filter(x=>!ex.has(x.id)):all;
   const e=dt?.date===today()?dt.engine:null;
-  if(e){const changed=e.ingest(events.filter(x=>x.kind!=='book'));onStreamRows([...changed].map(id=>e.row(id)).filter(Boolean));}
+  if(e){const changed=e.ingest(events.filter(x=>x.kind!=='book'));onStreamRows([...changed].map(id=>e.row(id)).filter(Boolean),{dayRange:true});}
   else onStreamRows(events.filter(x=>x.kind==='agg').map(x=>x.row));
 }
 const streamInfo=()=>({capable:data.has('stream'),provider:streamState.provider,active:streamFresh(),connected:streamState.connected,mode:streamState.mode||null,plan:streamState.plan||null,symbols:streamState.symbols,subscribed:streamState.subscribed,expected:streamState.expected||0,connections:streamState.connections||[],limit:streamState.limit,lastAt:streamState.lastAt||null,error:streamState.error,authFailed:!!streamState.authFailed,since:streamState.since||null,drops:streamDrops.date===today()?streamDrops.list.slice(-10):[],dropCount:streamDrops.date===today()?streamDrops.list.length:0,total:new Set([...watchlist,...scopeIds(researchScope)]).size});
@@ -439,7 +440,7 @@ async function backfillAll(onlyGaps=false){
   const ids=[...new Set([...dtScanIds(),...e.ids])].filter(id=>subscribedIds.has(id)&&(!onlyGaps||e.gaps.has(id)));
   e.markGap(ids);backfill={busy:true,again:false,started:Date.now(),done:0,total:ids.length,error:''};
   const interval=Math.ceil(60000/(streamState.perMinute||600))+10;
-  try{for(const id of ids){if(dt?.engine!==e||!feedWindow())break;try{const value=await data.streamBackfill(id,{interval});if(dt?.engine!==e)break;e.backfill(id,value||{});const r=e.row(id);if(r)onStreamRows([r]);}catch(x){backfill.error=x.message;if(blocked(x))break;}backfill.done++;}}
+  try{for(const id of ids){if(dt?.engine!==e||!feedWindow())break;try{const value=await data.streamBackfill(id,{interval});if(dt?.engine!==e)break;e.backfill(id,value||{});const r=e.row(id);if(r)onStreamRows([r],{dayRange:true});}catch(x){backfill.error=x.message;if(blocked(x))break;}backfill.done++;}}
   finally{backfill.busy=false;if(backfill.again)setTimeout(()=>backfillAll().catch(()=>{}),1000).unref();}
 }
 // 大盤環境紀錄（當沖，只記錄、不影響訊號）：快照中的加權（001）、櫃買（101）指數每 10 秒餵入引擎；全市場快照另提供上市／上櫃漲跌家數
@@ -522,8 +523,8 @@ async function intradayReport(id,groupId){
   const date=today(),p=M(),e=dt?.date===date?dt.engine:null,q=e?.bars(id)?.size?e.quote(id):null;
   let day=null;const replay=()=>day??=loadDay(date);
   const seriesOf=x=>{const b=e?.bars(x);if(b?.size)return{s:seriesFromBars(b,p),ref:e.quote(x)?.ref};const d=replay();return{s:seriesFromReplay(d,x,p),ref:replayRef(d,x,p)};};
-  // 沒有即時推播資料的股票：富果盤中 REST
-  const rest=q?null:await restQuote(id),rq=rest?.quote&&String(rest.quote.date||'')===date?rest.quote:null;
+  // 沒有即時推播資料，或推播沒有逐筆成交（精簡模式只有聚合行情）時：富果盤中 REST 補成交明細
+  const rest=(!q||!q.tape?.length)?await restQuote(id):null,rq=rest?.quote&&String(rest.quote.date||'')===date?rest.quote:null;
   let me=seriesOf(id),source=q?'stream':null;
   if(!q&&rq){const s=seriesFromCandles(rest.candles,p);if(s.m.length){me={s,ref:rq.referencePrice??rq.previousClose??me.ref};source='rest';}}
   if(!source)source=me.s.m.length?'replay':null;
@@ -535,7 +536,7 @@ async function intradayReport(id,groupId){
   const last=q?.last??(rq?(rq.lastPrice??rq.closePrice):null)??s.c.at(-1)??null,t=rq?.total||{};
   const book=q?.book||(rq&&(rq.bids||rq.asks)?{bids:rq.bids||[],asks:rq.asks||[]}:null);
   // 成交明細：[時間, 買進價, 賣出價, 成交價, 單量, 內外盤]（買進價／賣出價為成交當下的最佳買賣價）
-  const tape=q?(q.tape||[]).slice().reverse().map(([at,px,size,side,bid,ask])=>[e.hmsOf(at),bid??null,ask??null,px,size,side]):(rest?.trades||[]).map(x=>[usHms(x.time),x.bid??null,x.ask??null,x.price,x.size,x.ask>0&&x.price>=x.ask?1:x.bid>0&&x.price<=x.bid?-1:0]);
+  const tape=q?.tape?.length?(q.tape||[]).slice().reverse().map(([at,px,size,side,bid,ask])=>[e.hmsOf(at),bid??null,ask??null,px,size,side]):(rest?.trades||[]).map(x=>[usHms(x.time??(x.date?Date.parse(x.date):null)),x.bid??null,x.ask??null,x.price,x.size,x.ask>0&&x.price>=x.ask?1:x.bid>0&&x.price<=x.bid?-1:0]);
   const hmOf=m=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
   return{id,name:uniIndex().meta.get(id)?.name||rq?.name||id,date,source,live:liveWindow()&&(source==='stream'?streamFresh():source==='rest'),open:p.open,close:p.close,ref,limitUp:lim?.up??null,limitDown:lim?.down??null,
     quote:{last,change:ref>0&&last>0?Math.round((last/ref-1)*1e4)/100:null,changePrice:ref>0&&last>0?Math.round((last-ref)*1e4)/1e4:null,open:q?.open??rq?.openPrice??s.c[0]??null,high:q?.high??rq?.highPrice??(s.c.length?Math.max(...s.c):null),low:q?.low??rq?.lowPrice??(s.c.length?Math.min(...s.c):null),
@@ -1262,7 +1263,7 @@ async function saveProviderKey(id,key,certPass){
   if(!keyText(key))throw new UserError('請輸入有效的金鑰');
   if(job.running)throw new UserError('請等待更新完成或停止後，再變更金鑰');
   // 以資料源的驗證端點測試金鑰並記錄方案等級；金鑰本身不會出現在網址、紀錄或回應中
-  const info=await p.validate(key);await saveSecret(p.id,key);if(typeof certPass==='string'&&certPass.length>0)await saveSecret(`${id}Cert`,certPass);setProviderInfo(p.id,info||{});
+  const info=await p.validate(key,certPass);await saveSecret(p.id,key);if(typeof certPass==='string'&&certPass.length>0)await saveSecret(`${id}Cert`,certPass);setProviderInfo(p.id,info||{});
   const c=config();if(!c.providers.enabled.includes(p.id))saveConfig({providers:{...c.providers,enabled:[...c.providers.enabled,p.id]}});
   providersChanged();return info;
 }

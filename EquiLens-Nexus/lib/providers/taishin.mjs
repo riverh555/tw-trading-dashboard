@@ -75,9 +75,10 @@ export default {
   id: 'taishin', name: '台新證券', site: 'https://www.tssco.com.tw/', docs: 'https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare',
   markets: ['TW'], key: 'required', keyEnv: 'TAISHIN_PASSWORD', interval: 1000,
   caps: { snapshot: 1 }, snapshotMode: 'symbols',
-  async validate(key) {
+  async validate(key, certPassArg) {
     const password = key || await getSecret('taishin', 'TAISHIN_PASSWORD');
-    const certPass = await getSecret('taishinCert', 'TAISHIN_CERT_PASS');
+    // 設定頁送出的憑證密碼優先：先驗證、後儲存的流程下，儲存的舊值在第一次設定時是空的
+    const certPass = certPassArg || await getSecret('taishinCert', 'TAISHIN_CERT_PASS');
     const acc = await connect(password, certPass);
     const q = await sdk.marketdata.restClient.stock.intraday.quote({ symbol: '2330' });
     return { plan: 'taishin', tier: 'paid', account: acc };
