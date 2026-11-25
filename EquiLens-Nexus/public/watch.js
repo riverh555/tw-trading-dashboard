@@ -26,7 +26,7 @@ const twTick = (time, type) => {
 const twFull = t => twDate(t).toLocaleString('zh-TW', { timeZone: TW_TZ, hour12: false });
 const W = {
   id: null, period: pref('nexus.watchPeriod', '5m'), group: pref('nexus.watchGroup', ''), query: '',
-  board: null, data: null, error: '', lib: null, libError: '',
+  board: null, data: null, dataKey: '', error: '', lib: null, libError: '',
   showMA: pref('nexus.watchMA', '1') === '1', showVol: pref('nexus.watchVol', '1') === '1', showMACD: pref('nexus.watchMACD', '1') === '1',
   maFast: biVal('maFast', 5), maSlow: biVal('maSlow', 20), macdFast: biVal('macdFast', 12), macdSlow: biVal('macdSlow', 26), macdSignal: biVal('macdSignal', 9), volHeight: biVal('volHeight', 80),
   chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null, fitLeftPad: false, lastBarCount: 0,
@@ -41,11 +41,21 @@ const barLabel = b => b ? `${typeof b.time === 'number' ? new Date(b.time * 1000
 
 let boardBusy = null;
 async function loadBoard() { if (boardBusy) return boardBusy; boardBusy = (async () => { try { W.board = await C.api('board?group=watch'); } catch (e) { W.error = e.message; } })().finally(() => { boardBusy = null; }); return boardBusy; }
-let watchBusy = null;
-async function loadWatch() { if (watchBusy) return watchBusy; watchBusy = (async () => { try { W.data = await C.api(`watch?id=${encodeURIComponent(W.id)}&period=${encodeURIComponent(W.period)}`); W.error = ''; } catch (e) { W.error = e.message; C.toast(e.message); } })().finally(() => { watchBusy = null; }); return watchBusy; }
+let watchBusy = null, watchBusyKey = '';
+const watchKey = () => `${W.id}|${W.period}`;
+async function loadWatch() {
+  const key = watchKey();
+  if (watchBusy && watchBusyKey === key) return watchBusy; // 同一股票＋週期的並行請求才共用
+  watchBusyKey = key;
+  watchBusy = (async () => {
+    try { const data = await C.api(`watch?id=${encodeURIComponent(W.id)}&period=${encodeURIComponent(W.period)}`); if (watchKey() !== key) return; W.data = data; W.dataKey = key; W.error = ''; }
+    catch (e) { W.error = e.message; C.toast(e.message); }
+  })().finally(() => { watchBusy = null; });
+  return watchBusy;
+}
 export async function enterWatch() {
   const st = C.state();
-  if (!W.id || !(st.watchlist || []).includes(W.id)) W.id = (st.watchlist || [])[0] || '3406';
+  if (!W.id || !(st.watchlist || []).includes(W.id)) { const next = (st.watchlist || [])[0] || '3406'; if (next !== W.id) { W.id = next; W.data = null; W.dataKey = ''; } }
   await Promise.all([loadBoard(), loadWatch()]);
   if (C.page() !== 'watch') return;
   try { await ensureLibs(); } catch { /* 圖表元件缺失時圖表區顯示提示，已套用的指標等元件就緒後再畫 */ }
@@ -75,7 +85,7 @@ function headHTML() {
 }
 export function watchPage() {
   const st = C.state();
-  if (!W.id) W.id = (st.watchlist || [])[0] || '3406';
+  if (!W.id) { W.id = (st.watchlist || [])[0] || '3406'; W.data = null; W.dataKey = ''; }
   const g = wg();
   queueMicrotask(() => syncWatchDOM());
   return `<div class="wv-strip"><input type="search" id="wv-filter" placeholder="篩選代碼或名稱" value="${esc(W.query)}" aria-label="篩選代碼或名稱"><select id="wv-group" aria-label="自訂族群"><option value="">全部自選（${st.watchlist.length}）</option>${g.groups.map(x => `<option value="${esc(x.id)}" ${W.group === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}<option value="none" ${W.group === 'none' ? 'selected' : ''}>未分組</option></select><span class="wv-count" id="wv-count">${chipList().length} 檔</span>${W.error ? `<span class="wv-count" style="color:var(--down)">${esc(W.error)}</span>` : ''}</div>
@@ -453,9 +463,9 @@ document.addEventListener('click', async e => {
     if ('windicator' in ds) { openPicker(); return; }
     if (ds.wstudySettings) { openStudySettings(ds.wstudySettings); return; }
     if (ds.wstudyRemove) { removeStudy(ds.wstudyRemove); return; }
-    if (ds.wperiod && PERIODS.includes(ds.wperiod) && ds.wperiod !== W.period) { W.period = ds.wperiod; savePref('nexus.watchPeriod', ds.wperiod); await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
+    if (ds.wperiod && PERIODS.includes(ds.wperiod) && ds.wperiod !== W.period) { W.period = ds.wperiod; W.data = null; W.dataKey = ''; savePref('nexus.watchPeriod', ds.wperiod); await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
     if (ds.wtoggle) { toggleBuiltin(ds.wtoggle); return; }
-    if (ds.wchip && ds.wchip !== W.id) { W.id = ds.wchip; await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
+    if (ds.wchip && ds.wchip !== W.id) { W.id = ds.wchip; W.data = null; W.dataKey = ''; await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
   } catch (err) { C.toast(err.message); }
 });
 document.addEventListener('change', e => {
