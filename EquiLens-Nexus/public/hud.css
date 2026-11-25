@@ -779,7 +779,6 @@ a.ix-alert{color:inherit;text-decoration:none}a.ix-alert:hover .ix-ab>small{colo
 .wv-chip .wv-px b{font-size:1rem}
 .wv-chip .wv-spark{display:block;margin-top:2px}
 .wv-chip .wv-spark svg{width:38px;height:12px}
-.wv-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:stretch}
 .wv-rail{display:grid;gap:16px;align-content:start}
 .wv-chartbox{position:relative;display:flex;flex-direction:column}
 .wv-chartbox>.contentpad{display:flex;flex-direction:column;flex:1;min-height:0}
@@ -826,4 +825,41 @@ a.ix-alert{color:inherit;text-decoration:none}a.ix-alert:hover .ix-ab>small{colo
 .picker-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
 .picker-head h3{margin:0}
 #indicator-picker input[type=search]{width:100%;padding:8px 10px;margin-top:8px}
-@media (max-width:1100px){.wv-layout{grid-template-columns:1fr}.wv-chart{flex:none;height:420px;min-height:0}}
+
+/* ---------- 即時看盤：格子工作區（復刻；結構定位由 grid.js 用 inline style 做，這裡只負責外觀） ---------- */
+.wv-grid{position:relative;min-height:420px}
+.wv-grid-item{border:1px solid var(--line2);border-radius:var(--r);background:rgba(3,8,16,.55)}
+.wv-grid-item.wv-grid-dragging{opacity:.6;z-index:20}
+.wv-grid-handle{border-bottom:1px solid var(--line)}
+.wv-grid-handle:active{cursor:grabbing}
+.wv-grid-title{margin:0;font-size:.86rem;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wv-grid-body{min-height:0}
+.wv-grid-resize{opacity:.6}
+.wv-grid-resize::after{content:"";position:absolute;right:2px;bottom:2px;width:10px;height:10px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted)}
+.wv-grid-ghost{border:1px dashed var(--cyan);border-radius:var(--r);background:rgba(34,230,255,.08);z-index:15;pointer-events:none}
+/* 手機模式（<768px）由 grid.js 自己切換 wv-grid-mobile＋單欄堆疊，這裡不另加 media query，避免 768–1100px 區間被誤切 */
+/* ---------- 即時看盤：圖內圖例（左上 overlay） ---------- */
+.wv-legend-overlay{position:absolute;left:8px;top:6px;z-index:11;pointer-events:none;font-size:.78rem;font-family:var(--mono);color:var(--muted);line-height:1.5}
+.wv-legend-overlay .wv-lg-ohlc{color:var(--muted)}
+.wv-lg-row{display:flex;align-items:center;gap:6px;pointer-events:none}
+.wv-lg-row.off{opacity:.45}
+.wv-lg-name{font-weight:600;white-space:nowrap}
+.wv-lg-vals{white-space:nowrap}
+.wv-lg-btns{display:flex;gap:2px;pointer-events:auto}
+.wv-lg-btns button{background:rgba(3,8,16,.82);border:1px solid var(--line2);border-radius:4px;color:var(--muted);cursor:pointer;width:20px;height:20px;padding:0;line-height:16px;font-size:11px}
+.wv-lg-btns button:hover{color:var(--cyan);border-color:var(--cyan)}
+/* 即時看盤：K 線面板（格子 body 內，flex 直排填滿面板） */
+.wv-candle-panel{display:flex;flex-direction:column;height:100%;min-height:0;padding:10px;box-sizing:border-box}
+/* 舊的圖表左上齒輪列（內建開關＋已套用指標）由圖例接手後不再使用，留著樣式以免舊節點殘留時破版 */
+.wv-chart-gears{display:none}
+/* ---------- 即時看盤：畫線工具列（圖表左側直排） ---------- */
+.wv-draw-toolbar{position:absolute;left:8px;top:64px;z-index:12;display:flex;flex-direction:column;gap:4px}
+.wv-draw-toolbar button{width:26px;height:26px;padding:0;line-height:22px;font-size:13px;background:rgba(3,8,16,.82);border:1px solid var(--line2);border-radius:4px;color:var(--muted);cursor:pointer}
+.wv-draw-toolbar button:hover{color:var(--cyan);border-color:var(--cyan)}
+.wv-draw-toolbar button.selected{color:var(--cyan);border-color:var(--cyan);background:rgba(34,230,255,.12)}
+/* ---------- 即時看盤：串流狀態 ---------- */
+.wv-stream-status{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;color:var(--muted);font-family:var(--mono)}
+.wv-stream-status .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.wv-stream-status.live .dot{background:var(--down)}
+.wv-stream-status.dead .dot,.wv-stream-status.reconnecting .dot{background:var(--up)}
+.wv-stream-status.live{color:var(--down)}

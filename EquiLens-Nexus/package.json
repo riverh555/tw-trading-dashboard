@@ -11,7 +11,7 @@
     "start": "node server.mjs",
     "fetch-vendor": "node tools/fetch-vendor.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/setup.js && node --check public/market.js && node --check public/i18n.js && node --check public/heatmap.js && node --check public/briefing.js && node --check public/live.js && node --check public/insight-ui.js && node --check public/grouprank.js && node --check public/report-card.js && node --check public/chipwatch.js"
+    "check": "node --check server.mjs && node --check lib/sse.mjs && node --check public/app.js && node --check public/setup.js && node --check public/market.js && node --check public/i18n.js && node --check public/heatmap.js && node --check public/briefing.js && node --check public/live.js && node --check public/insight-ui.js && node --check public/grouprank.js && node --check public/report-card.js && node --check public/chipwatch.js && node --check public/watch.js && node --check public/quote-store.js && node --check public/candle-chart.js && node --check public/grid.js && node --check public/drawings.js && node --check public/intraday-line.js && node --check public/legend-values.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

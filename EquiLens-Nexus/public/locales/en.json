@@ -3291,4 +3291,60 @@
  "成交量沒有可調參數。": "Volume has no adjustable parameters."
 ,
  "成交量柱高度": "Volume bar height"
+,
+ "K 線圖": "Candles"
+,
+ "createDrawings 需要 chart 與 series（主圖 K 線 series）": "createDrawings requires chart and series (main candle series)"
+,
+ "createGrid: 需要一個容器元素 el": "createGrid: a container element el is required"
+,
+ "createIntradayLine: 需要 el（容器元素）": "createIntradayLine: el (container element) is required"
+,
+ "serialize: layout 必須是陣列": "serialize: layout must be an array"
+,
+ "storageKey 需要非空字串 symbol": "storageKey requires a non-empty string symbol"
+,
+ "{0} 小時": "{0} hours"
+,
+ "{0} 需要 { time, price }，且兩者皆為有限數字": "{0} requires { time, price }, both finite numbers"
+,
+ "個股當日走勢": "Intraday"
+,
+ "射線": "Ray"
+,
+ "尚未載入": "Not loaded yet"
+,
+ "尚無當日走勢。": "No intraday movement yet."
+,
+ "延長線": "Extended line"
+,
+ "文字": "Text"
+,
+ "斷線": "Disconnected"
+,
+ "未知畫線工具：{0}": "Unknown drawing tool: {0}"
+,
+ "柱 {0}": "Hist {0}"
+,
+ "橫線": "Horizontal line"
+,
+ "測量": "Measure"
+,
+ "直線": "Vertical line"
+,
+ "矩形": "Rectangle"
+,
+ "費波回撤": "Fib retracement"
+,
+ "趨勢線": "Trend line"
+,
+ "輸入文字": "Enter text"
+,
+ "連線中": "Connecting"
+,
+ "重連中": "Reconnecting"
+,
+ "量 {0}": "Vol {0}"
+,
+ "顯示／隱藏": "Show / Hide"
 }

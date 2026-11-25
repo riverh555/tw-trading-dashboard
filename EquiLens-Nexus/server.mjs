@@ -26,6 +26,7 @@ import { buildGroupRanking, compareRanks, quotesFromSnapshot, quotesFromReplay, 
 import { EMPTY_SCOPE, validateScope, scopeIds, resolveScope, addGroup, renameGroup, removeGroup, reorderGroups, addStock, removeStock, importGroups, selectedUpdateIds } from './lib/scope.mjs';
 import { patternSnapshot, clearPatterns, updatePatternData } from './lib/pattern-service.mjs';
 import { createStreamPool, splitSymbols, spreadSymbols } from './lib/stream.mjs';
+import { createSseHub, quotePayload, bookPayload, tapePayload, indexPayload } from './lib/sse.mjs';
 import { normalizeBooks, checkpoints, buildLiquidity, reduceDay, pickExtras, swapExtras, createBookRecorder, readMeta, writeMeta, compactDay, listBookDays, pruneDays, readStock, toCSV, exportDay } from './lib/bookrec.mjs';
 import { createDayTrade, normalizeDaytrade, roundTripCost, tzOffset, evaluateSignal, reviewStats, signalTitle, rankTurnover, selectTurnover, DT_TITLES } from './lib/daytrade.mjs';
 import { createHistoryLoader } from './lib/daytrade-history.mjs';
@@ -57,6 +58,27 @@ let liveHeat=null,livePending=null,lastSnap=null,monitorPauseUntil=0,monitorErro
 let stream=null,streamState={provider:null,connected:false,symbols:0,subscribed:0,limit:0,lastAt:0,error:'',since:0},streamRows=new Map(),streamDate='',streamAsOf='',yvCache={date:'',map:new Map()};
 // WebSocket 逐筆報價累積成的當日 1 分 K（快照監控不可用時的備援）：key `${id}:${date}` → { rows:[[HH:MM,開,高,低,收,量]], last:累積量 }
 let streamBars=new Map();
+// 即時看盤 SSE（Phase 1）：瀏覽器中央報價庫的即時推播來源；客戶端集合與節流由 lib/sse.mjs 的 hub 管理
+const sseHub=createSseHub();
+// 全部 SSE 客戶端訂閱代號的聯集：快照扇出時只對這些代號送報價
+const wantedSymbols=()=>sseHub.wantedSymbols();
+// SSE 心跳（: ping 註解行，每 15 秒），避免中間代理關閉閒置連線
+setInterval(()=>{ for(const c of [...sseHub.clients]) sseHub.heartbeat(c); },15000).unref();
+// 大盤指數 SSE：有 SSE 客戶端時每 10 秒推一次 TAIEX 報價＋最新 1 分鐘點（供大盤迷你走勢尾端更新）；
+// indexReport 本身有 5 秒快取（盤中），取不到報價或出錯時靜默跳過，不影響推播連線
+setInterval(()=>{
+  if(!sseHub.clients.size)return;
+  indexReport('TAIEX').then(ix=>{ const p=indexPayload(ix); if(p)sseHub.broadcast('index',p,{}); }).catch(()=>{});
+},10000).unref();
+// 某股最新報價＋最新 1 分 K 的 SSE 扇出（只送給訂閱該股的客戶端；同股每種事件 1 秒節流）
+function sseFanQuote(id){
+  const r=liveRow(id);if(!r)return;
+  const p=quotePayload(r,r===streamFor(id)?'stream':'snapshot');if(p)sseHub.broadcast('quote',p,{id});
+}
+function sseFanBar(id){
+  const sb=streamBars.get(`${id}:${today()}`),last=sb?.rows?.at(-1);
+  if(last)sseHub.broadcast('bar',{id,bar:last.slice()},{id});
+}
 // 當沖監控：引擎（每日一個）、股票資料、盤前資料、斷線補資料進度、今天是否因訂閱數不足改用精簡模式
 let dt=null,dtMeta=new Map(),dtPrep={date:'',busy:false,data:null,at:0},dtSaved='',dtFallback='',backfill={busy:false,again:false,started:0,done:0,total:0,error:''};
 const dtHistory=createHistoryLoader({read,write:(name,value)=>{fs.mkdirSync(path.join(LOCAL,'daytrade-history'),{recursive:true});write(name,value);},fetchHistory:(...args)=>data.streamHistory(...args)});
@@ -166,6 +188,9 @@ function onSnapshot(rows,heat){
   try{dtIndexFromSnapshot(rows,heat);}catch{}
   // 有即時推播的股票由推播資料判斷異動，快照只負責其餘股票（避免兩份不同時間的報價混在一起）
   try{runRadar(heat.date,streamFresh()?day.filter(r=>!streamRows.has(r.stock_id)):day);}catch(e){console.error(t('異動雷達失敗：')+e.message);}
+  // SSE：快照報價只扇出給有訂閱該股的客戶端（hub.broadcast 本身也會過濾）
+  const wanted=wantedSymbols();
+  if(wanted.size)for(const r of day){ if(!wanted.has(r.stock_id))continue; const p=quotePayload(r,'snapshot'); if(p)sseHub.broadcast('quote',p,{id:r.stock_id}); }
 }
 setInterval(()=>{
   if(settings.monitor===false||!liveWindow()||!data.has('snapshot')||Date.now()<monitorPauseUntil||livePending)return;
@@ -211,6 +236,8 @@ function onStreamRows(rows,{dayRange=false}={}){
   }
   streamState={...streamState,lastAt:Date.now()};
   if(fresh.length)try{runRadar(date,fresh);}catch(e){console.error(t('異動雷達失敗：')+e.message);}
+  // SSE：新推播列扇出最新報價＋最新 1 分 K（只送給訂閱該股的客戶端）
+  for(const r of fresh){ sseFanQuote(r.stock_id); sseFanBar(r.stock_id); }
 }
 // 即時推播訂閱的股票：自選、當沖觀察名單、研究族群、價格提醒；排在前面的優先（方案訂閱數不足時後面的不訂閱）
 const streamUniverse=()=>[...new Set([...watchlist,...(dtSettings().enabled?dtScanIds():[]),...scopeIds(researchScope),...ruleIds()])];
@@ -260,7 +287,11 @@ async function streamTick(){
   if(!stream){
     const key=await getSecret(p.id,p.keyEnv);if(!key)return;
     streamState={...meta,connected:false,symbols:plan.ids.length,subscribed:0,expected:plan.ids.length*plan.channels.length,lastAt:0,alive:0,error:'',since:0,resumed:0,connections:[]};
-    stream=createStreamPool({spec:p.stream,key,market:M(),groups:plan.groups,flushMs:500,onEvents:onStreamEvents,onEvent:ev=>{onBookEvent(ev);if(ev.kind==='book'&&subscribedIds.has(ev.id))dt?.engine.ingest([ev]);},onStatus:onStreamStatus});
+    stream=createStreamPool({spec:p.stream,key,market:M(),groups:plan.groups,flushMs:500,onEvents:onStreamEvents,onEvent:ev=>{onBookEvent(ev);if(ev.kind==='book'&&subscribedIds.has(ev.id))dt?.engine.ingest([ev]);
+      // SSE：五檔（book 或帶五檔的聚合行情）與逐筆成交直接扇出，不經當沖引擎
+      if(ev.kind==='book'||ev.book){const bp=bookPayload(ev);if(bp)sseHub.broadcast('book',bp,{id:ev.id});}
+      else if(ev.kind==='trade'){const tp=tapePayload(ev);if(tp)sseHub.broadcast('tape',tp,{id:ev.id});}
+    },onStatus:onStreamStatus});
   }else{streamState={...streamState,...meta};stream.update(plan.groups);}
   bookStart(plan);
   // 自動判斷方案：完整模式連線 15 秒後訂閱仍不足（方案上限不夠），今天改用精簡模式
@@ -734,15 +765,16 @@ function sessionBar(id,date,bars5,daily=localDaily(id)){
 }
 // 分 K：最近幾個交易日連續排列（1m/3m/5m/15m 取 3 日；60m 取 10 日，湊足 MA20 所需根數）。
 // 3m 當天由 1m 合成（盤中 API 沒有 3m）；過去日期同樣由 1m 合成，沿用既有快取。
-async function chartIntraday(id, minutes) {
-  const d = today(), n = minutes >= 60 ? 10 : 3, dates = (await tradingDates()).filter(x => x <= d).slice(-(n + 2)), days = []; let error = '';
+// before：只取嚴格早於該日期的交易日（無限捲動載入舊 K 線用）；不帶時行為不變。
+async function chartIntraday(id, minutes, before='') {
+  const d = before||today(), n = minutes >= 60 ? 10 : 3, dates = (await tradingDates()).filter(x => x <= d && (!before || x < before)).slice(-(n + 2)), days = []; let error = '';
   for (const date of dates) { const m = await minuteRows(id, date); if (m.error) error = m.error; if (m.rows.length) days.push({ date, source: m.source, bars: fiveMinBars(m.rows, { start: m.start, size: minutes }) }); }
   const use = days.slice(-n); if (!use.length && error) throw new UserError(error);
   const daily = localDaily(id), bars = use.flatMap(x => x.bars.map(b => [`${x.date} ${b[0]}`, ...b.slice(1)])), last = use.at(-1)?.date;
   return { bars, days: use.map(x => ({ date: x.date, source: x.source, prev: prevCloseOf(id, x.date, daily) })), session: last ? sessionBar(id, last, bars, daily) : null, notice: error && use.some(x => x.source === 'replay') ? t('{error}；已改用本機時光機紀錄', { error }) : '' };
 }
-async function chartReport(id, period) {
-  const info = boardData([id]).stocks[0], result = period === 'day' ? await chartDay(id) : await chartIntraday(id, PERIOD_MINUTES[period] || 5);
+async function chartReport(id, period, before='') {
+  const info = boardData([id]).stocks[0], result = period === 'day' ? await chartDay(id, before) : await chartIntraday(id, PERIOD_MINUTES[period] || 5, before);
   return { id, name: info.name, sector: info.sector, score: info.score, period, prev: info.prev, quote: info.quote, daily: info.daily, inScope: inScope(id), live: !!lastSnap && liveWindow(), stream: false, asOf: lastSnap?.asOf || null, ...result };
 }
 // 即時看盤：把目前這一分鐘的即時報價補進 REST 分 K（REST candles 常落後幾根），讓最後一根 K 線跟著動
@@ -785,9 +817,11 @@ async function dailyHistory(id){
   fs.mkdirSync(path.join(LOCAL,'daily'),{recursive:true});write(name,{at:Date.now(),rows});
   return rows.length?rows:own;
 }
-async function chartDay(id){
+async function chartDay(id, before=''){
   let rows=await dailyHistory(id),bar=null;const lastDate=rows.at(-1)?.[0]||'',r=snapRow(id),rDate=r?String(r.date).slice(0,10):'';
-  if(r&&rDate>lastDate&&Number(r.close)>0){const c=Number(r.close);bar=[rDate,Number(r.open)||c,Number(r.high)||c,Number(r.low)||c,c,Math.round(Number(r.total_volume)||0)];}
+  // before：只取嚴格早於該日期的日 K，不補當日即時列（無限捲動載入舊 K 線用）；不帶時行為不變
+  if(before)rows=rows.filter(x=>x[0]<before);
+  else if(r&&rDate>lastDate&&Number(r.close)>0){const c=Number(r.close);bar=[rDate,Number(r.open)||c,Number(r.high)||c,Number(r.low)||c,c,Math.round(Number(r.total_volume)||0)];}
   else{const day=replayToday();if(day&&day.date>lastDate)bar=replayDayBar(day,id);}
   if(bar)rows=[...rows,bar];
   return{bars:rows.slice(-160),today:bar?bar[0]:null,session:rows.at(-1)||null};
@@ -1339,7 +1373,7 @@ function importBundle(b,parts){
 // public/vendor 下的圖表元件（Lightweight Charts 等）：開機時掃描一次列入靜態白名單；路徑由實際檔案產生，不接受任意路徑
 // vendor 目錄不進版控（安裝時由 tools/fetch-vendor.mjs 下載），尚未下載時掃描為空，伺服器照常啟動
 const vendorStatic = () => { const out = {}, root = path.join(ROOT, 'public', 'vendor'); const walk = d => { try { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.m?js$/.test(e.name)) { const rel = path.relative(path.join(ROOT, 'public'), p).split(path.sep).join('/'); out['/' + rel] = rel; } } } catch { } }; walk(root); return out; };
-const STATIC = { '/':'index.html', '/app.js':'app.js', '/heatmap.js':'heatmap.js', '/briefing.js':'briefing.js','/flow-cards.js':'flow-cards.js', '/live.js':'live.js', '/watch.js':'watch.js', '/chart-range.js':'chart-range.js', '/indicators.js':'indicators.js', '/insight-ui.js':'insight-ui.js', '/report-card.js':'report-card.js', '/save-image.js':'save-image.js', '/prefs.js':'prefs.js', '/grouprank.js':'grouprank.js', '/i18n.js':'i18n.js', '/setup.js':'setup.js', '/market.js':'market.js', '/daytrade.js':'daytrade.js', '/intraday.js':'intraday.js', '/chipwatch.js':'chipwatch.js', '/hud.css':'hud.css', '/favicon.svg':'favicon.svg', ...vendorStatic() };
+const STATIC = { '/':'index.html', '/app.js':'app.js', '/heatmap.js':'heatmap.js', '/briefing.js':'briefing.js','/flow-cards.js':'flow-cards.js', '/live.js':'live.js', '/watch.js':'watch.js', '/quote-store.js':'quote-store.js', '/candle-chart.js':'candle-chart.js', '/grid.js':'grid.js', '/drawings.js':'drawings.js', '/intraday-line.js':'intraday-line.js', '/legend-values.js':'legend-values.js', '/chart-range.js':'chart-range.js', '/indicators.js':'indicators.js', '/insight-ui.js':'insight-ui.js', '/report-card.js':'report-card.js', '/save-image.js':'save-image.js', '/prefs.js':'prefs.js', '/grouprank.js':'grouprank.js', '/i18n.js':'i18n.js', '/setup.js':'setup.js', '/market.js':'market.js', '/daytrade.js':'daytrade.js', '/intraday.js':'intraday.js', '/chipwatch.js':'chipwatch.js', '/hud.css':'hud.css', '/favicon.svg':'favicon.svg', ...vendorStatic() };
 // 即時看盤的 importmap 是必要的 inline script：以內容 hash 加入 CSP，不放寬 unsafe-inline
 const importMapSrc = (() => { try { const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8'); return html.match(/<script type="importmap">([\s\S]*?)<\/script>/)?.[1] || ''; } catch { return ''; } })();
 const importMapCsp = importMapSrc ? ` 'sha256-${crypto.createHash('sha256').update(importMapSrc).digest('base64')}'` : '';
@@ -1549,7 +1583,32 @@ const server = http.createServer(async (req,res) => {
     if(route==='/api/chart'&&req.method==='GET'){
       const id=url.searchParams.get('id'),period=validPeriod(url.searchParams.get('period'))?url.searchParams.get('period'):'5m';
       if(!validId(id))throw new UserError('股票代碼格式錯誤');
-      return json(res,200,await once(`c:${id}:${period}`,()=>chartReport(id,period)));
+      const before=url.searchParams.get('before')||'';
+      if(before&&!/^\d{4}-\d{2}-\d{2}$/.test(before))throw new UserError('日期格式錯誤');
+      return json(res,200,await once(`c:${id}:${period}:${before}`,()=>chartReport(id,period,before)));
+    }
+    // 即時看盤 SSE（Phase 1）：訂閱代號的即時報價／1 分 K／五檔／逐筆＋大盤指數。
+    // 注意：此路由一旦開始寫 SSE 就不再走外層 json() 錯誤處理；寫入失敗時移除客戶端，不拋錯。
+    if(route==='/api/stream'&&req.method==='GET'){
+      const ids=[...new Set(String(url.searchParams.get('symbols')||'').split(',').map(s=>s.trim()).filter(Boolean))];
+      // TAIEX 不是股票代號（validId 不收），但大盤指數事件要靠訂閱它才會分發到前端處理器；其餘代號仍須通過 validId
+      if(!ids.length||ids.length>60||!ids.every(id=>id==='TAIEX'||validId(id)))throw new UserError('股票代碼格式錯誤');
+      res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});
+      res.write('retry: 3000\n');
+      const client=sseHub.addClient(res,new Set(ids));
+      res.on('error',()=>sseHub.removeClient(client));
+      try{
+        const info=streamInfo();
+        sseHub.send(client,'status',{status:streamFresh()?'live':'connecting',provider:info.provider||null,mode:info.mode||null});
+        for(const id of ids){
+          const r=liveRow(id);
+          if(r){const p=quotePayload(r,r===streamFor(id)?'stream':'snapshot');if(p)sseHub.send(client,'quote',p);}
+          const sb=streamBars.get(`${id}:${today()}`),last=sb?.rows?.at(-1);
+          if(last)sseHub.send(client,'bar',{id,bar:last.slice()});
+        }
+      }catch{ sseHub.removeClient(client); return; }
+      req.on('close',()=>sseHub.removeClient(client));
+      return;
     }
     if(route==='/api/watch'&&req.method==='GET'){
       const id=url.searchParams.get('id'),period=validPeriod(url.searchParams.get('period'))?url.searchParams.get('period'):'5m';
