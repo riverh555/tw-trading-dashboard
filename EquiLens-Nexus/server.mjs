@@ -55,6 +55,8 @@ let flowBusy=false,heatBusy=false,reportBusy=false;
 let liveHeat=null,livePending=null,lastSnap=null,monitorPauseUntil=0,monitorError='';
 // 盤中即時推播（WebSocket）：連線、狀態與各股最新一筆資料
 let stream=null,streamState={provider:null,connected:false,symbols:0,subscribed:0,limit:0,lastAt:0,error:'',since:0},streamRows=new Map(),streamDate='',streamAsOf='',yvCache={date:'',map:new Map()};
+// WebSocket 逐筆報價累積成的當日 1 分 K（快照監控不可用時的備援）：key `${id}:${date}` → { rows:[[HH:MM,開,高,低,收,量]], last:累積量 }
+let streamBars=new Map();
 // 當沖監控：引擎（每日一個）、股票資料、盤前資料、斷線補資料進度、今天是否因訂閱數不足改用精簡模式
 let dt=null,dtMeta=new Map(),dtPrep={date:'',busy:false,data:null,at:0},dtSaved='',dtFallback='',backfill={busy:false,again:false,started:0,done:0,total:0,error:''};
 const dtHistory=createHistoryLoader({read,write:(name,value)=>{fs.mkdirSync(path.join(LOCAL,'daytrade-history'),{recursive:true});write(name,value);},fetchHistory:(...args)=>data.streamHistory(...args)});
@@ -88,7 +90,7 @@ function loadMarketState(){
   liveHeat=null;lastSnap=null;monitorPauseUntil=0;monitorError='';radarState=null;radarPlans={at:0,map:new Map()};alertsBox={date:'',list:[]};
   replayCache={key:'',data:null};boardGroupCache={key:'',data:null};calendarCache={date:'',dates:[]};heatSummaryCache=null;grLive={at:0,data:null};grAttempt={date:'',at:0};
   newsState=null;newsStatus={at:0,error:'',found:0,seeded:false};newsPauseUntil=0;kbarMiss.clear();priceRules=read('price-alerts.json',[]).filter(r=>r&&RULE_KINDS.includes(r.kind)&&validId(r.stockId));ruleState=null;kbarDenied={until:0,error:''};
-  if(stream){stream.close();stream=null;}streamRows=new Map();streamDate='';streamAsOf='';streamState={...streamState,connected:false};
+  if(stream){stream.close();stream=null;}streamRows=new Map();streamBars=new Map();streamDate='';streamAsOf='';streamState={...streamState,connected:false};
   if(bookRec){bookRec.close();bookRec=null;}bookDay={date:''};
   dtHistory.reset();subscribedIds=new Set();dt=null;dtMeta=new Map();dtSaved='';dtFallback='';{const p=read('daytrade-prep.json',null);dtPrep={date:p?.date||'',busy:false,data:p,at:0};}
   resetReplayCache();invalidate();
@@ -191,8 +193,19 @@ function yesterdayVolume(id,date){
 }
 function onStreamRows(rows){
   const date=today(),fresh=rows.filter(r=>String(r.date).slice(0,10)===date);
-  if(streamDate!==date){streamDate=date;streamRows=new Map();streamAsOf='';}
-  for(const r of fresh){r.yesterday_volume=yesterdayVolume(r.stock_id,date);streamRows.set(r.stock_id,r);if(String(r.date)>streamAsOf)streamAsOf=String(r.date);}
+  if(streamDate!==date){streamDate=date;streamRows=new Map();streamBars=new Map();streamAsOf='';}
+  for(const r of fresh){
+    r.yesterday_volume=yesterdayVolume(r.stock_id,date);streamRows.set(r.stock_id,r);if(String(r.date)>streamAsOf)streamAsOf=String(r.date);
+    // 累積當日 1 分 K：總量是累積值，先算與上一筆的差額再進該分鐘
+    const c=Number(r.close);if(!(c>0))continue;
+    const key=`${r.stock_id}:${date}`;let sb=streamBars.get(key);
+    if(!sb){sb={rows:[],last:0};streamBars.set(key,sb);}
+    const t=String(r.date).slice(11,16),vol=Number(r.total_volume)||0,dv=Math.max(0,vol-sb.last);sb.last=vol;
+    const row=sb.rows.find(x=>x[0]===t),hi=Number(r.high)||c,lo=Number(r.low)||c;
+    if(row){row[2]=Math.max(row[2],c,hi);row[3]=Math.min(row[3],c,lo);row[4]=c;row[5]+=dv;}
+    else{const prev=sb.rows.at(-1);sb.rows.push([t,prev?prev[4]:(Number(r.open)||c),Math.max(c,hi),Math.min(c,lo),c,dv]);}
+    if(sb.rows.length>600)sb.rows.splice(0,sb.rows.length-600);
+  }
   streamState={...streamState,lastAt:Date.now()};
   if(fresh.length)try{runRadar(date,fresh);}catch(e){console.error(t('異動雷達失敗：')+e.message);}
 }
@@ -675,10 +688,13 @@ async function minuteRows(id,date){
     kbarMiss.set(key,Date.now());
   }
   if(!error&&Date.now()<kbarDenied.until)error=kbarDenied.error;
-  const day=loadDay(date),r=snapRow(id,date),tl=r?tickLabel(r.date):'';
+  const day=loadDay(date),r=liveRow(id,date),tl=r?tickLabel(r.date):'';
   const tick=tl?{t:tl,close:Number(r.close),volume:Number(r.total_volume),amount:Number(r.total_amount),high:Number(r.high),low:Number(r.low)}:null;
-  const rows=day||tick?replayMinuteBars(day,id,{open:r?Number(r.open):null,tick}):[];
-  return{rows,start:false,source:rows.length?'replay':'none',error};
+  let rows=day||tick?replayMinuteBars(day,id,{open:r?Number(r.open):null,tick}):[];
+  let source=rows.length?'replay':'none';
+  // 快照監控不可用時，用 WebSocket 逐筆累積的 1 分 K；推播資料比單一快照畫格更完整
+  if(date===today()){const sb=streamBars.get(`${id}:${date}`);if(sb?.rows?.length>rows.length){rows=sb.rows.map(x=>x.slice());source='stream';}}
+  return{rows,start:false,source,error};
 }
 // 本機日 K（研究名單日成交，或先前查過的非名單個股快取），供昨收與當日開高低收使用，不發請求
 const localDaily=id=>{const s=market().stocks.find(x=>x.id===id);return s?.bars?.length?dailyKRows(s.bars):read(`daily/${id}.json`,null)?.rows||[];};

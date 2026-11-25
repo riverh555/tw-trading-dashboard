@@ -29,7 +29,7 @@ const W = {
   board: null, data: null, error: '', lib: null, libError: '',
   showMA: pref('nexus.watchMA', '1') === '1', showVol: pref('nexus.watchVol', '1') === '1', showMACD: pref('nexus.watchMACD', '1') === '1',
   maFast: biVal('maFast', 5), maSlow: biVal('maSlow', 20), macdFast: biVal('macdFast', 12), macdSlow: biVal('macdSlow', 26), macdSignal: biVal('macdSignal', 9), volHeight: biVal('volHeight', 80),
-  chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null, fitLeftPad: false,
+  chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null, fitLeftPad: false, lastBarCount: 0,
   registry: null, studies: [], renderers: new Map(), studySeq: 0, favs: null,
   pickerQ: '', pickerCat: 'all', pickerMode: 'list', pickerStudy: null, pickerBuiltin: '', pickerTimer: null, studiesHTML: '',
 };
@@ -110,7 +110,7 @@ async function ensureLibs() {
     return W.lib;
   } catch (e) { W.libError = `${e.message}。${VENDOR_HINT}`; throw e; }
 }
-function destroyMainChart() { try { W.resizeObs?.disconnect(); } catch { } W.resizeObs = null; try { W.chart?.remove(); } catch { } W.chart = null; W.series = null; W.chartEl = null; W.renderers = new Map(); W.fitLeftPad = false; }
+function destroyMainChart() { try { W.resizeObs?.disconnect(); } catch { } W.resizeObs = null; try { W.chart?.remove(); } catch { } W.chart = null; W.series = null; W.chartEl = null; W.renderers = new Map(); W.fitLeftPad = false; W.lastBarCount = 0; }
 function destroyIdxChart() { try { W.idxChart?.remove(); } catch { } W.idxChart = null; W.idxChartEl = null; const el = document.getElementById('wv-idx'); if (el) el.innerHTML = ''; }
 function buildMainChart() {
   const { lwc, SMA, MACD } = W.lib, el = document.getElementById('wv-chart');
@@ -167,10 +167,16 @@ function applyBars() {
   }
   for (const study of W.studies) renderStudy(study, { reuse: true });
   paintStudies();
+  const grew = W.lastBarCount > 0 && bars.length > W.lastBarCount;
+  W.lastBarCount = bars.length;
   if (W.fitLeftPad) {
     W.fitLeftPad = false;
     const range = initialVisibleRange(bars.length);
     if (range) { try { W.chart.timeScale().setVisibleLogicalRange(range); } catch { } }
+  } else if (grew) {
+    // 新 K 棒出現時自動跟到最新；若使用者已往回捲則不干擾
+    const ts = W.chart.timeScale(), vr = ts.getVisibleLogicalRange();
+    if (!vr || vr.to >= W.lastBarCount - 4) { try { ts.scrollToRealTime(); } catch { } }
   }
 }
 
