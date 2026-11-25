@@ -29,7 +29,17 @@ const parseBarTime = s => {
 export const numBars = bars => (bars || []).map(b => Array.isArray(b)
   ? { time: parseBarTime(b[0]), open: b[1], high: b[2], low: b[3], close: b[4], volume: b[5] || 0 }
   : { time: parseBarTime(b.time), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 });
-const barLabel = b => b ? `${typeof b.time === 'number' ? new Date(b.time * 1000).toLocaleDateString('sv-SE', { timeZone: TW_TZ }) : b.time}　開 ${fmt(b.open, 2)}　高 ${fmt(b.high, 2)}　低 ${fmt(b.low, 2)}　收 ${fmt(b.close, 2)}` : '';
+export const barLabel = b => {
+  if (!b) return '';
+  let t = b.time;
+  if (typeof t === 'number') {
+    const d = new Date(t * 1000);
+    const date = d.toLocaleDateString('sv-SE', { timeZone: TW_TZ });
+    const hm = d.toLocaleTimeString('en-GB', { timeZone: TW_TZ, hour: '2-digit', minute: '2-digit', hour12: false });
+    t = hm === '00:00' ? date : `${date} ${hm}`; // 日 K 午夜只顯示日期，分時顯示 HH:MM
+  }
+  return `${t}　開 ${fmt(b.open, 2)}　高 ${fmt(b.high, 2)}　低 ${fmt(b.low, 2)}　收 ${fmt(b.close, 2)}`;
+};
 
 // 合併兩組已排序的 bars：依 time 去重（重複時保留 existing 那組）、排序。給無限歷史分頁用。
 export function mergeBars(existing, incoming) {
@@ -57,7 +67,7 @@ export function createCandleChart({ el, lib, onNeedOlder }) {
     localization: { locale: 'zh-TW', timeFormatter: twFull },
   });
   const candles = chart.addSeries(lwc.CandlestickSeries, { upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN, borderVisible: false });
-  let bars = [], loadingOlder = false, destroyed = false, legendRows = [];
+  let bars = [], loadingOlder = false, destroyed = false, legendRows = [], suppressOlderOnce = false;
 
   // ---- 圖例 overlay（左上，absolute；容器不擋圖表操作，只有按鈕可點）----
   const legendEl = document.createElement('div');
@@ -89,6 +99,7 @@ export function createCandleChart({ el, lib, onNeedOlder }) {
   // ---- 無限歷史：可見範圍左緣接近最舊一根時，請整合層載入更舊的 bars ----
   chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
     if (destroyed || loadingOlder || !range || !bars.length) return;
+    if (suppressOlderOnce) { suppressOlderOnce = false; return; } // setBars 剛設好的範圍不觸發載入舊資料
     if (range.from < 10) {
       loadingOlder = true;
       try {
@@ -110,13 +121,17 @@ export function createCandleChart({ el, lib, onNeedOlder }) {
       bars = numBars(next);
       candles.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
       const range = initialVisibleRange(bars.length);
+      // 剛換上的範圍 from=-5 會立刻觸發 onNeedOlder；只讓使用者往左捲時才載入更舊歷史
+      suppressOlderOnce = true;
+      setTimeout(() => { suppressOlderOnce = false; }, 1000);
       if (range) { try { chart.timeScale().setVisibleLogicalRange(range); } catch { } }
       loadingOlder = false;
       paintLegend();
     },
-    // 同一股票／週期輪詢刷新：整組換資料，但不動可見範圍（不套左邊留白、不跟到最新）
+    // 同一股票／週期輪詢刷新：新資料優先（同一 time 以新版為準），但保留已載入的更舊歷史；
+    // 直接整組換掉會把無限分頁的 bars 清掉，可見範圍指到資料外，圖表會跳動。
     replaceBars(next) {
-      bars = numBars(next);
+      bars = mergeBars(numBars(next), bars);
       candles.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
       paintLegend();
     },
