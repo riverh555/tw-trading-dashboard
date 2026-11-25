@@ -74,7 +74,8 @@ let newsState=null,newsBusy=false,newsPauseUntil=0,newsStatus={at:0,error:'',fou
 let reportError='',reportAttempt={date:'',n:0,at:0};
 const kbarLive=new Map(); // 今日盤中向資料源取的 1 分 K（短 TTL，不寫檔，避免凍結在舊資料）
 const kbarMiss=new Map(); // 資料源尚無分 K 的「股票:日期」，10 分鐘內不重查
-let kbarDenied={until:0,error:''}; // 金鑰或方案不足時 1 小時內不再請求分 K，直接用時光機
+let kbarDenied={until:0,error:''}; // 金鑰或方案不足時 1 小時內不再請求分 K，直接用時光機（額度限制只停 1 分鐘）
+const kbarCooldown=e=>e?.code==='quota'?60e3:3600e3;
 setInterval_('finmind',settings.interval);
 
 // 研究族群：沒有設定時從空白開始（可在設定頁建立或匯入）；格式不符目前市場時先備份原檔再從空白開始
@@ -683,6 +684,8 @@ const tickLabel=d=>{const m=/(\d{2}):(\d{2}):(\d{2})/.exec(String(d||''));if(!m)
 async function minuteRows(id,date){
   const key=`${id}:${date}`,x=clock(),isToday=date===x.date,live=isToday&&(liveWindow()||x.minute<M().close+30),name=`kbar/${id}-${date}.json`;
   let error='',rows=[],source='none',start=false;
+  // 今日的盤中分 K 寫成帶時間的暫存檔，重啟後仍能沿用（但每次仍會嘗試更新）
+  if(isToday){const saved=read(name,null);if(saved?.live&&saved.bars?.length&&!kbarLive.has(key))kbarLive.set(key,{at:saved.at||0,bars:saved.bars,source:saved.source||'fugle'});}
   // 已收盤日的檔案快取；今日不讀檔，避免盤中一直看到舊資料
   if(!isToday){const cached=read(name,null);if(cached?.bars?.length)return{rows:cached.bars,start:true,source:cached.source||'finmind'};}
   // 已收盤日或非盤中時，先向資料源要歷史分 K 並存檔
@@ -690,7 +693,7 @@ async function minuteRows(id,date){
     try{
       const bars=await data.intraday(id,date),src=data.source('intraday');
       if(bars.length){if(!isToday){fs.mkdirSync(path.join(LOCAL,'kbar'),{recursive:true});write(name,{date,source:src,bars});}return{rows:bars,start:true,source:src};}
-    }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+3600e3,error};}
+    }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+kbarCooldown(e),error};}
     kbarMiss.set(key,Date.now());
   }
   if(!error&&Date.now()<kbarDenied.until)error=kbarDenied.error;
@@ -700,16 +703,17 @@ async function minuteRows(id,date){
   if(day||tick){rows=replayMinuteBars(day,id,{open:r?Number(r.open):null,tick});source='replay';}
   // 快照監控不可用時，用 WebSocket 逐筆累積的 1 分 K；推播資料比單一快照畫格更完整
   if(isToday){const sb=streamBars.get(key);if(sb?.rows?.length>rows.length){rows=sb.rows.map(a=>a.slice());source='stream';}}
-  // 今日盤中仍沒有任何 1 分 K：直接問資料源（例如 Fugle 的 /intraday/candles），短 TTL 避免每 3 秒打一次
+  // 今日盤中仍沒有任何 1 分 K：先用本次程序已抓過的今日分 K（即使短 TTL 過期或剛剛被額度限制），再考慮向資料源更新
   if(isToday&&!rows.length){
     const cachedLive=kbarLive.get(key);
-    if(cachedLive&&Date.now()-cachedLive.at<15000){rows=cachedLive.bars;source=cachedLive.source;start=true;}
-    else if(data.has('intraday')&&Date.now()>kbarDenied.until&&Date.now()-(kbarMiss.get(key)||0)>10*60e3){
+    if(cachedLive){rows=cachedLive.bars;source=cachedLive.source;start=true;}
+    const stale=!cachedLive||Date.now()-cachedLive.at>15000;
+    if(stale&&data.has('intraday')&&Date.now()>kbarDenied.until&&Date.now()-(kbarMiss.get(key)||0)>10*60e3){
       try{
         const bars=await data.intraday(id,date);
-        if(bars.length){rows=bars;source=data.source('intraday');start=true;kbarLive.set(key,{at:Date.now(),bars,source});}
+        if(bars.length){rows=bars;source=data.source('intraday');start=true;kbarLive.set(key,{at:Date.now(),bars,source});fs.mkdirSync(path.join(LOCAL,'kbar'),{recursive:true});write(name,{date,live:true,at:Date.now(),source,bars});}
         else kbarMiss.set(key,Date.now());
-      }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+3600e3,error};kbarMiss.set(key,Date.now());}
+      }catch(e){error=e.message;if(blocked(e))kbarDenied={until:Date.now()+kbarCooldown(e),error};kbarMiss.set(key,Date.now());}
     }
   }
   return{rows,start,source:rows.length?source:'none',error};
@@ -741,10 +745,29 @@ async function chartReport(id, period) {
   const info = boardData([id]).stocks[0], result = period === 'day' ? await chartDay(id) : await chartIntraday(id, PERIOD_MINUTES[period] || 5);
   return { id, name: info.name, sector: info.sector, score: info.score, period, prev: info.prev, quote: info.quote, daily: info.daily, inScope: inScope(id), live: !!lastSnap && liveWindow(), stream: false, asOf: lastSnap?.asOf || null, ...result };
 }
+// 即時看盤：把目前這一分鐘的即時報價補進 REST 分 K（REST candles 常落後幾根），讓最後一根 K 線跟著動
+function applyLiveBar(bars, q) {
+  if (!q?.last || !q.time || !bars?.length) return bars;
+  const mm = /^(\d{2}):(\d{2})/.exec(String(q.time)); if (!mm) return bars;
+  const t = Math.floor(Date.parse(`${today()}T${mm[1]}:${mm[2]}:00+08:00`) / 1000);
+  if (!Number.isFinite(t)) return bars;
+  const dayStart = Math.floor(Date.parse(`${today()}T00:00:00+08:00`) / 1000);
+  const used = bars.filter(b => b.time >= dayStart).reduce((n, b) => n + (b.volume || 0), 0);
+  const dv = Math.max(0, Number(q.volume || 0) - used), last = bars.at(-1);
+  if (last.time === t) {
+    last.close = q.last; last.high = Math.max(last.high, q.last); last.low = Math.min(last.low, q.last);
+    if (dv > 0) last.volume += dv;
+  } else if (t > last.time) {
+    bars.push({ time: t, open: last.close, high: Math.max(last.close, q.last), low: Math.min(last.close, q.last), close: q.last, volume: dv });
+  }
+  return bars;
+}
 // 即時看盤：個股即時走勢＋指定週期 K 線＋加權指數（指數另回當日 1 分走勢；K 線已換成圖表可用的時間格式；成交明細為 [時間, 買進價, 賣出價, 成交價, 單量, 內外盤]）
 async function watchReport(id, period) {
   const [intra, chart, index] = await Promise.all([intradayReport(id, ''), chartReport(id, period), indexReport('TAIEX')]);
-  return { ...intra, period, bars: toChartBars(chart.bars), chartDays: chart.days, session: chart.session,
+  const bars = toChartBars(chart.bars);
+  if (intra.live) applyLiveBar(bars, intra.quote);
+  return { ...intra, period, bars, chartDays: chart.days, session: chart.session,
     indexBars: toChartBars((index.daily || []).slice(-60)),
     indexIntraday: { open: index.open, close: index.close, ref: index.ref, source: index.source, minutes: { m: index.minutes?.m || [], c: index.minutes?.c || [] } },
     indexQuote: index.quote, indexRef: index.ref, indexName: index.name };
