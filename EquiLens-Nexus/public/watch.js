@@ -111,7 +111,7 @@ async function ensureLibs() {
   } catch (e) { W.libError = `${e.message}。${VENDOR_HINT}`; throw e; }
 }
 function destroyMainChart() { try { W.resizeObs?.disconnect(); } catch { } W.resizeObs = null; try { W.chart?.remove(); } catch { } W.chart = null; W.series = null; W.chartEl = null; W.renderers = new Map(); W.fitLeftPad = false; }
-function destroyIdxChart() { try { W.idxChart?.remove(); } catch { } W.idxChart = null; W.idxChartEl = null; }
+function destroyIdxChart() { try { W.idxChart?.remove(); } catch { } W.idxChart = null; W.idxChartEl = null; const el = document.getElementById('wv-idx'); if (el) el.innerHTML = ''; }
 function buildMainChart() {
   const { lwc, SMA, MACD } = W.lib, el = document.getElementById('wv-chart');
   if (!el) return;
@@ -406,28 +406,12 @@ function indexIntradaySVG(d) {
 function buildIdxChart() {
   const el = document.getElementById('wv-idx');
   if (!el) return;
+  // 右上的迷你圖只畫當日走勢：不再退回日 K，避免分時資料短暫缺失時冒出舊的迷你 K 線
+  if (W.idxChart) destroyIdxChart();
+  W.idxChartEl = null;
   const intra = W.data?.indexIntraday;
-  if (intra?.minutes?.m?.length) {
-    if (W.idxChart) destroyIdxChart();
-    W.idxChartEl = null;
-    el.innerHTML = indexIntradaySVG(intra);
-    return;
-  }
-  if (!W.data?.indexBars?.length || !W.lib?.lwc) { if (!W.idxChart) el.innerHTML = '<div class="wv-empty">尚無 K 線資料。</div>'; return; }
-  const { lwc } = W.lib;
-  if (W.idxChartEl === el && W.idxChart) { W.idxChart.series?.setData?.(numBars(W.data.indexBars)); return; }
-  destroyIdxChart();
-  const chart = lwc.createChart(el, {
-    width: el.clientWidth || 340, height: 150,
-    layout: { background: { type: lwc.ColorType.Solid, color: '#03060c' }, textColor: '#8fa3b8', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-    grid: { vertLines: { color: 'rgba(148,163,184,.07)' }, horzLines: { color: 'rgba(148,163,184,.07)' } },
-    timeScale: { timeVisible: false, borderColor: 'rgba(148,163,184,.25)', tickMarkFormatter: twTick },
-    rightPriceScale: { borderColor: 'rgba(148,163,184,.25)' },
-    localization: { locale: 'zh-TW', timeFormatter: twFull },
-  });
-  const s = chart.addSeries(lwc.CandlestickSeries, { upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN, borderVisible: false });
-  s.setData(numBars(W.data.indexBars));
-  chart.series = s; W.idxChart = chart; W.idxChartEl = el;
+  if (intra?.minutes?.m?.length) { el.innerHTML = indexIntradaySVG(intra); return; }
+  el.innerHTML = `<div class="wv-empty">${W.data ? '尚無指數當日走勢。' : '載入中…'}</div>`;
 }
 async function syncWatchDOM() {
   if (!C || C.page() !== 'watch') return;
