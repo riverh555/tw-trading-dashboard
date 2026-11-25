@@ -77,19 +77,34 @@ function errText(d, fallback = 'WebSocket error') {
 // Fugle 時間戳可能是微秒／毫秒／秒，統一成毫秒
 const tsMs = (ts) => { const n = Number(ts); if (!Number.isFinite(n) || n <= 0) return null; return n > 1e14 ? n / 1000 : n > 1e11 ? n : n * 1000; };
 
+// 登入失敗保護：自動重試（暖機／快照）不能無限重試登入——密碼錯誤 3 次會鎖帳號。
+// 憑證錯誤（01-0xx 密碼／帳號、A00007 未簽署）一旦發生就不再自動重試，直到使用者在設定頁重新驗證（manual）或重啟；
+// 其他暫時性失敗（憑證檔、網路）只冷卻 5 分鐘。
+const LOGIN_COOLDOWN_MS = 5 * 60 * 1000;
+const CRED_ERR_RE = /(01-0(00|01|02|10|11|12|20)|A00007|AO-10[128]|密碼|帳號)/;
+let lastLoginFailAt = 0;
+let loginAutoBlocked = false;
+function isCredentialError(e) { return CRED_ERR_RE.test(nativeErrText(e)); }
+
 // 登入、執行 API 認證（尚未開通台新 API 者首次登入時需執行 registerApiAuth）、建立行情連線
-async function connect(loginPassword, certPass) {
+async function connect(loginPassword, certPass, opts = {}) {
   const { personalId, certPath } = taishinSettings();
   if (!personalId || !certPath) throw new DataError('{label}：請填寫台新證券帳號（身分證字號）與憑證檔案路徑', { label: LABEL }, { fatal: true, code: 'auth' });
   if (!loginPassword) throw new DataError('{label}：請先填寫帳號、密碼與憑證密碼', { label: LABEL }, { fatal: true, code: 'auth' });
   if (!certPass) throw new DataError('{label}：請填寫憑證密碼', { label: LABEL }, { fatal: true, code: 'auth' });
   const creds = credKey(personalId, certPath, loginPassword, certPass);
   if (sdk && lastCreds === creds) return;
+  // 自動重試（暖機／快照）遵守失敗保護；設定頁手動驗證（manual）不受限，讓使用者修正後能重試
+  if (!opts.manual) {
+    if (loginAutoBlocked) throw new DataError('{label}：台新登入先前因帳號或密碼問題失敗，請檢查設定後重新驗證', { label: LABEL }, { fatal: true, code: 'auth' });
+    if (Date.now() - lastLoginFailAt < LOGIN_COOLDOWN_MS) throw new DataError('{label}：台新登入剛失敗，冷卻中，請稍後再試', { label: LABEL }, { fatal: true, code: 'auth' });
+  }
   const s = new TaishinSDK();
   let accounts;
   try {
     accounts = s.login(personalId, loginPassword, certPath, certPass);
   } catch (e) {
+    if (isCredentialError(e)) loginAutoBlocked = true; else lastLoginFailAt = Date.now();
     throw sdkError(e, '登入');
   }
   const acc = Array.isArray(accounts) ? accounts[0] : accounts;
@@ -120,6 +135,8 @@ async function connect(loginPassword, certPass) {
   sdk = s;
   lastCreds = creds;
   lastToken = token;
+  loginAutoBlocked = false;
+  lastLoginFailAt = 0;
   resetStream();
   return acc;
 }
@@ -276,17 +293,38 @@ function toSnapshot(symbol, d, lot = 1000, tz = TW_TZ) {
   };
 }
 
+// 是否即時連線中（WS 已連線＋已授權＋已收到至少一筆 aggregate）：供資料源路由判斷是否優先用台新。
+// 要求有 aggregate，避免「剛連上但盤後沒資料」時被選為來源卻等不到報價而逾時。
+function isLive() { return wsConnected && wsAuthed && aggCache.size > 0; }
+
+// 背景暖機：嘗試登入＋建立 WS（失敗不拋出，登入失敗保護在 connect 內處理）。
+// 供資料源路由在台新尚未連線時觸發，讓它之後能成為即時來源；不等待呼叫方。
+// 同時間只允許一個暖機進行，避免每次快照都重複觸發。
+let warmupInFlight = false;
+async function warmup() {
+  if (warmupInFlight) return;
+  warmupInFlight = true;
+  try {
+    const password = await getSecret('taishin', 'TAISHIN_PASSWORD');
+    const certPass = await getSecret('taishinCert', 'TAISHIN_CERT_PASS');
+    await connect(password, certPass);
+    await ensureStream(['2330']);
+  } catch { /* 暖機失敗不影響當下呼叫，下次快照會再試（受登入失敗保護限制） */ }
+  finally { warmupInFlight = false; }
+}
+
 export { tsMs, toSnapshot, errText, nativeErrText };
 
 export default {
   id: 'taishin', name: '台新證券', site: 'https://www.tssco.com.tw/', docs: 'https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare',
   markets: ['TW'], key: 'required', keyEnv: 'TAISHIN_PASSWORD', interval: 1000,
   caps: { snapshot: 1 }, snapshotMode: 'symbols',
+  isLive, warmup,
   async validate(key, certPassArg) {
     const password = key || await getSecret('taishin', 'TAISHIN_PASSWORD');
     // 設定頁送出的憑證密碼優先：先驗證、後儲存的流程下，儲存的舊值在第一次設定時是空的
     const certPass = certPassArg || await getSecret('taishinCert', 'TAISHIN_CERT_PASS');
-    const acc = await connect(password, certPass);
+    const acc = await connect(password, certPass, { manual: true });
     const got = await ensureStream(['2330']);
     if (!got.includes('2330')) throw sdkError(wsError || new Error('未收到台新即時行情'), '報價');
     return { plan: 'taishin', tier: 'paid', account: acc };

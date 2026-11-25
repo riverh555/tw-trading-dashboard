@@ -3163,6 +3163,8 @@
  "{label}：台新{step}失敗：{msg}": "{label}: Taishin {step} failed: {msg}",
  "{label}：尚未取得台新即時行情授權，請先完成登入": "{label}: Taishin real-time authorization not obtained yet, please log in first",
  "{label}：未取得台新即時行情授權，請重試": "{label}: could not obtain Taishin real-time authorization, please try again",
+ "{label}：台新登入先前因帳號或密碼問題失敗，請檢查設定後重新驗證": "{label}: Taishin login previously failed due to an account or password problem; please check the settings and validate again",
+ "{label}：台新登入剛失敗，冷卻中，請稍後再試": "{label}: Taishin login just failed and is cooling down; please try again later",
  "台新即時行情連線中斷": "Taishin real-time connection interrupted",
  "台新即時行情授權逾時": "Taishin real-time authorization timed out",
  "台新即時行情錯誤": "Taishin real-time error",

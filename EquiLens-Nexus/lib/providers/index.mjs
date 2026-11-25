@@ -40,6 +40,12 @@ export function pick(cap) {
   const order = prefer[cap] && list.some(p => p.id === prefer[cap]) ? [PROVIDERS[prefer[cap]], ...list] : list;
   return order.find(p => hasKey(p) && supports(p, cap)) || null;
 }
+// 同 pick，但排除指定資料源（台新優先嘗試失敗時，退回下一個來源而不重試台新）
+export function pickExcept(cap, excludeId) {
+  const { prefer } = config().providers, list = enabledProviders().filter(p => p.id !== excludeId);
+  const order = prefer[cap] && prefer[cap] !== excludeId && list.some(p => p.id === prefer[cap]) ? [PROVIDERS[prefer[cap]], ...list] : list;
+  return order.find(p => hasKey(p) && supports(p, cap)) || null;
+}
 export const has = cap => !!pick(cap);
 // 每種能力目前由哪個資料源提供（設定頁與前端用來決定顯示哪些功能）
 export const capabilityMap = () => Object.fromEntries(Object.keys(CAPABILITIES).map(c => [c, pick(c)?.id || null]));
@@ -55,10 +61,16 @@ async function call(cap, args, opts) {
   return p[cap](...args, ctx);
 }
 
+// 台新即時連線中（已啟用＋有金鑰＋WS 即時）時，盤中即時報價優先用台新；否則維持原本的 pick
+const taishinSnapshotLive = () => enabledProviders().includes(taishin) && hasKey(taishin) && taishin.isLive();
+// 盤中即時報價實際會用哪個來源（與 data.snapshot 的路由一致）：台新即時連線中 → 台新；
+// 否則排除台新後的 pick（沒有其他來源時才用台新）。mode／limit／source 都以此為準，避免計畫與實際來源不一致。
+const snapshotPick = () => taishinSnapshotLive() ? taishin : (pickExcept('snapshot', 'taishin') || pick('snapshot'));
+
 export const data = {
-  pick, has, source: cap => pick(cap)?.id || null,
-  snapshotMode: () => pick('snapshot')?.snapshotMode || null,
-  snapshotLimit: () => { const p = pick('snapshot'); return p ? (p.snapshotLimit?.(providerInfo()[p.id]) ?? null) : null; },
+  pick, has, source: cap => cap === 'snapshot' ? (snapshotPick()?.id || null) : (pick(cap)?.id || null),
+  snapshotMode: () => snapshotPick()?.snapshotMode || null,
+  snapshotLimit: () => { const p = snapshotPick(); return p ? (p.snapshotLimit?.(providerInfo()[p.id]) ?? null) : null; },
   // 即時推播的補資料（REST）：由提供推播的資料源執行
   streamBackfill: async (id, opts) => { const p = pick('stream'); if (!p?.streamBackfill) return null; return p.streamBackfill(id, await ctxOf(p, opts)); },
   streamHistory: async (id, date, opts) => { const p = pick('stream'); if (!p?.streamHistory) throw new DataError('即時資料源不支援歷史分 K'); return p.streamHistory(id, date, await ctxOf(p, opts)); },
@@ -74,7 +86,27 @@ export const data = {
   daily: (id, from, to, opts) => call('daily', [id, from, to], opts),
   dailyAll: (date, opts) => call('dailyAll', [date], opts),
   dailyAllAdjusted: (date, opts) => { const p = pick('dailyAll'); return p?.dailyAllAdjusted ? ctxOf(p, opts).then(ctx => p.dailyAllAdjusted(date, ctx)) : call('dailyAll', [date], opts); },
-  snapshot: (ids, opts) => call('snapshot', [ids], opts),
+  snapshot: async (ids, opts) => {
+    // 台新即時連線中且有指定代碼時優先用台新；失敗或無資料時退回排除台新的來源（不重試台新），
+    // 沒有其他來源（只有台新）時回傳台新的結果或錯誤
+    if (ids?.length && taishinSnapshotLive()) {
+      try {
+        const rows = await taishin.snapshot(ids, await ctxOf(taishin, opts));
+        if (rows?.length) return rows;
+        const fb = pickExcept('snapshot', 'taishin');
+        return fb ? fb.snapshot(ids, await ctxOf(fb, opts)) : rows;
+      } catch (e) {
+        const fb = pickExcept('snapshot', 'taishin');
+        if (fb) return fb.snapshot(ids, await ctxOf(fb, opts));
+        throw e;
+      }
+    }
+    // 台新未連線：背景暖機（不等待），維持原來方式但排除台新（避免選到未連線的台新）；只有台新時走原來方式
+    if (enabledProviders().includes(taishin) && hasKey(taishin) && !taishin.isLive()) taishin.warmup?.().catch(() => {});
+    const fb = pickExcept('snapshot', 'taishin');
+    if (fb) return fb.snapshot(ids, await ctxOf(fb, opts));
+    return call('snapshot', [ids], opts);
+  },
   intraday: (id, date, opts) => call('intraday', [id, date], opts),
   dayTrade: (date, opts) => call('dayTrade', [date], opts),
   news: (id, date, opts) => call('news', [id, date], opts),
