@@ -24,6 +24,12 @@ function credKey(personalId, certPath, password, certPass) {
   return `${personalId}|${certPath}|${password}|${certPass}`;
 }
 
+// SDK 原生錯誤（Rust binding 拋出的 plain Error）轉成可顯示的 DataError，設定頁才看得到真正原因
+function sdkError(e, step) {
+  const msg = e instanceof Error ? e.message : String(e);
+  return new DataError('{label}：台新{step}失敗：{msg}', { label: LABEL, step, msg }, { fatal: true, code: 'auth' });
+}
+
 // 登入、執行 API 認證（尚未開通台新 API 者首次登入時需執行 registerApiAuth）、建立行情連線
 async function connect(loginPassword, certPass) {
   const { personalId, certPath } = taishinSettings();
@@ -33,12 +39,29 @@ async function connect(loginPassword, certPass) {
   const creds = credKey(personalId, certPath, loginPassword, certPass);
   if (sdk && lastCreds === creds) return;
   const s = new TaishinSDK();
-  const accounts = s.login(personalId, loginPassword, certPath, certPass);
+  let accounts;
+  try {
+    accounts = s.login(personalId, loginPassword, certPath, certPass);
+  } catch (e) {
+    throw sdkError(e, '登入');
+  }
   const acc = Array.isArray(accounts) ? accounts[0] : accounts;
   if (!acc) throw new DataError('{label}：登入回應沒有帳號', { label: LABEL }, { fatal: true, code: 'auth' });
-  const registered = s.registerApiAuth(acc); // 尚未開通台新 API 者，首次登入時需執行 API 認證
-  if (!registered) throw new DataError('{label}：台新 API 認證未完成，請聯繫台新證券後再試', { label: LABEL }, { fatal: true, code: 'auth' });
-  s.initRealtime(acc);
+  // 官方文件：registerApiAuth 只在首次開通 API 時執行，之後應移除；已開通者重複執行可能失敗，
+  // 只要後續行情授權成功就忽略，失敗時再把認證錯誤一併回報
+  let authNote = '';
+  try {
+    const registered = s.registerApiAuth(acc);
+    if (!registered) authNote = 'API 認證回傳未完成';
+  } catch (e) {
+    authNote = e instanceof Error ? e.message : String(e);
+  }
+  try {
+    s.initRealtime(acc);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new DataError('{label}：台新{step}失敗：{msg}', { label: LABEL, step: '行情授權', msg: authNote ? `${msg}（API 認證：${authNote}）` : msg }, { fatal: true, code: 'auth' });
+  }
   sdk = s;
   lastCreds = creds;
   return acc;
@@ -80,7 +103,12 @@ export default {
     // 設定頁送出的憑證密碼優先：先驗證、後儲存的流程下，儲存的舊值在第一次設定時是空的
     const certPass = certPassArg || await getSecret('taishinCert', 'TAISHIN_CERT_PASS');
     const acc = await connect(password, certPass);
-    const q = await sdk.marketdata.restClient.stock.intraday.quote({ symbol: '2330' });
+    let q;
+    try {
+      q = await sdk.marketdata.restClient.stock.intraday.quote({ symbol: '2330' });
+    } catch (e) {
+      throw sdkError(e, '報價');
+    }
     return { plan: 'taishin', tier: 'paid', account: acc };
   },
   snapshot: async (ids, ctx) => {
@@ -92,7 +120,12 @@ export default {
     const lot = ctx.market?.lot ?? 1000;
     const tz = ctx.market?.tz || TW_TZ;
     for (const id of ids) {
-      const q = await sdk.marketdata.restClient.stock.intraday.quote({ symbol: String(id) });
+      let q;
+      try {
+        q = await sdk.marketdata.restClient.stock.intraday.quote({ symbol: String(id) });
+      } catch (e) {
+        throw sdkError(e, '報價');
+      }
       out.push(toSnapshot(String(id), q, lot, tz));
     }
     return out;
