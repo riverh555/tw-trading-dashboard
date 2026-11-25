@@ -72,8 +72,8 @@ setInterval(()=>{
 },10000).unref();
 // 某股最新報價＋最新 1 分 K 的 SSE 扇出（只送給訂閱該股的客戶端；同股每種事件 1 秒節流）
 function sseFanQuote(id){
-  const r=liveRow(id);if(!r)return;
-  const p=quotePayload(r,r===streamFor(id)?'stream':'snapshot');if(p)sseHub.broadcast('quote',p,{id});
+  const lk=lastKnownRow(id);if(!lk)return;
+  const p=quotePayload(lk.row,lk.source);if(p)sseHub.broadcast('quote',p,{id});
 }
 function sseFanBar(id){
   const sb=streamBars.get(`${id}:${today()}`),last=sb?.rows?.at(-1);
@@ -650,19 +650,43 @@ function replayToday(){const days=listDays(),date=days.at(-1);return date?loadDa
 const snapRow=(id,date)=>lastSnap&&(!date||lastSnap.date===date)?lastSnap.byId.get(id)||null:null;
 // 時間（HH:MM 或 HH:MM:SS）在全日交易時段中的位置（0–1，扣除午休）
 const sessionPos=t=>{const m=minuteOf(t);if(m==null)return null;const p=M(),sec=Number(String(t).slice(6,8))||0;return Math.min(1,Math.max(0,(elapsedTrading(p,m)+sec/60)/(p.length||1)));};
+function rowToQuote(id,r,source){
+  if(!r)return null;
+  const close=Number(r.close),ch=Number(r.change_price),prev=close-ch,n=v=>v==null||v===''?null:Number(v);
+  return{close,change:prev>0?Math.round(ch/prev*1e4)/100:null,changePrice:ch,open:Number(r.open),high:Number(r.high),low:Number(r.low),volume:Number(r.total_volume),amount:Number(r.total_amount),yesterdayVolume:Number(r.yesterday_volume),bid:Number(r.buy_price),ask:Number(r.sell_price),volumeAtBid:n(r.volume_at_bid),volumeAtAsk:n(r.volume_at_ask),source,time:String(r.date).slice(11,19),date:String(r.date).slice(0,10)};
+}
+// 最後已知報價（盤後也保留今日最後一筆）：推播逾時或快照掛掉時，看板／SSE 仍顯示今日最後價，不退回昨日收盤
+function lastKnownRow(id){
+  const s=streamRows.get(id);
+  if(s&&String(s.date).slice(0,10)===today())return{row:s,source:'stream'};
+  if(lastSnap?.date===today()){
+    const f=lastSnap.byId.get(id);
+    if(f)return{row:f,source:'snapshot'};
+  }
+  return null;
+}
+// 看板現價：今日快照 → 今日最後已知價（推播最後一筆，盤後也保留）；昨日資料不冒充現價
+function boardQuote(id){
+  if(lastSnap?.date===today()){
+    const s=snapRow(id);
+    if(s)return rowToQuote(id,s,'snapshot');
+  }
+  const lk=lastKnownRow(id);
+  if(lk)return rowToQuote(id,lk.row,lk.source);
+  return null;
+}
 function quoteOf(id,{board=false}={}){
   const r=board?snapRow(id):liveRow(id); // 看板只用快照；其他（例如新聞事件）用推播與快照中較新的一筆
-  if(r){const close=Number(r.close),ch=Number(r.change_price),prev=close-ch,n=v=>v==null||v===''?null:Number(v);return{close,change:prev>0?Math.round(ch/prev*1e4)/100:null,changePrice:ch,open:Number(r.open),high:Number(r.high),low:Number(r.low),volume:Number(r.total_volume),amount:Number(r.total_amount),yesterdayVolume:Number(r.yesterday_volume),bid:Number(r.buy_price),ask:Number(r.sell_price),volumeAtBid:n(r.volume_at_bid),volumeAtAsk:n(r.volume_at_ask),source:r===streamFor(id)?'stream':'snapshot',time:String(r.date).slice(11,19),date:String(r.date).slice(0,10)};}
-  return null;
+  return rowToQuote(id,r,r===streamFor(id)?'stream':'snapshot');
 }
 function boardData(ids){
   const day=replayToday(),idx=day?new Map(day.ids.map((id,i)=>[id,i])):new Map(),m=market(),{meta}=uniIndex();
   const stocks=ids.map(id=>{
-    const s=m.stocks.find(x=>x.id===id),q=quoteOf(id,{board:true}),i=idx.get(id);
+    const s=m.stocks.find(x=>x.id===id),q=boardQuote(id),i=idx.get(id);
     // 全日走勢圖：時光機每分鐘一點，橫軸位置＝該時間在全日交易時段中的比例（0＝開盤、1＝收盤）；最後一點換成最新快照（每 10 秒移動）
     const pts=i==null?[]:day.frames.map(f=>[sessionPos(f.t),framePrice(day,f,i)]).filter(([x,v])=>x!=null&&v>0);
     if(q?.close>0&&day?.date===q.date&&pts.length){const pt=[sessionPos(q.time),q.close];if(q.time.slice(0,5)===day.frames.at(-1)?.t)pts[pts.length-1]=pt;else if(pt[0]>=pts.at(-1)[0])pts.push(pt);}
-    let quote=q;if(!quote&&i!=null&&day.frames.length){const f=day.frames.at(-1),close=framePrice(day,f,i),prev=prevPrice(day,i);if(close>0)quote={close,change:prev>0?Math.round((close/prev-1)*1e4)/100:null,changePrice:prev>0?Math.round((close-prev)*1e4)/1e4:null,amount:frameAmount(day,f,i),time:f.t,date:day.date};}
+    let quote=q;if(!quote&&i!=null&&day?.date===today()&&day.frames.length){const f=day.frames.at(-1),close=framePrice(day,f,i),prev=prevPrice(day,i);if(close>0)quote={close,change:prev>0?Math.round((close/prev-1)*1e4)/100:null,changePrice:prev>0?Math.round((close-prev)*1e4)/1e4:null,amount:frameAmount(day,f,i),time:f.t,date:day.date};}
     const step=Math.max(1,Math.ceil(pts.length/135)),use=pts.filter((_,k)=>k%step===0||k===pts.length-1);
     return{id,name:s?.name||meta.get(id)?.name||id,sector:s?.sector||meta.get(id)?.sector||'',score:s?.score??null,prev:i==null?null:prevPrice(day,i),quote,daily:s?{price:s.price,change:s.change,asOf:s.asOf}:null,spark:use.map(p=>p[1]),sparkX:use.map(p=>Math.round(p[0]*1e4)/1e4)};
   });
@@ -1601,8 +1625,8 @@ const server = http.createServer(async (req,res) => {
         const info=streamInfo();
         sseHub.send(client,'status',{status:streamFresh()?'live':'connecting',provider:info.provider||null,mode:info.mode||null});
         for(const id of ids){
-          const r=liveRow(id);
-          if(r){const p=quotePayload(r,r===streamFor(id)?'stream':'snapshot');if(p)sseHub.send(client,'quote',p);}
+          const lk=lastKnownRow(id);
+          if(lk){const p=quotePayload(lk.row,lk.source);if(p)sseHub.send(client,'quote',p);}
           const sb=streamBars.get(`${id}:${today()}`),last=sb?.rows?.at(-1);
           if(last)sseHub.send(client,'bar',{id,bar:last.slice()});
         }

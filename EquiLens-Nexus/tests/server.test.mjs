@@ -80,6 +80,7 @@ test('local API persists watchlist/evidence, validates settings, blocks cross-or
     assert.deepEqual([rv.recent[0].signals[2].regime,rv.recent[0].signals[2].strength,rv.recent[0].signals[0].regime],['tailwind','strong',null]);
     assert.equal(rv.recent[0].signals[0].title,'爆量突破');
     const bd=(await(await fetch(base+'board?ids=2330')).json()).stocks[0];assert.deepEqual([bd.spark,bd.sparkX,bd.prev],[[1005,1010,1008],[0,0.5,1],1000]);
+    assert.equal(bd.quote,null); // 過期時光機（2026-10-07）不冒充今日現價：無今日快照／推播時 quote 為 null
     assert.equal((await fetch(base+'detail?id=999999')).status,404);
   }finally{child.kill();await new Promise(r=>child.once('close',r));fs.rmSync(directory,{recursive:true,force:true});}
 });
