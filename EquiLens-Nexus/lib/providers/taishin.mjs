@@ -48,9 +48,21 @@ function credKey(personalId, certPath, password, certPass) {
 }
 
 // SDK 原生錯誤（Rust binding 拋出的 plain Error）轉成可顯示的 DataError，設定頁才看得到真正原因
-function sdkError(e, step) {
+// 原生錯誤的訊息可能是 {"code","message"} JSON（官方錯誤格式），或帶 code 屬性
+// （實測：憑證路徑錯誤時 code='GenericFailure'）；兩種都攤平成「代碼：訊息」，設定頁才看得到真正的錯誤代碼
+function nativeErrText(e) {
   const msg = e instanceof Error ? e.message : String(e);
-  return new DataError('{label}：台新{step}失敗：{msg}', { label: LABEL, step, msg }, { fatal: true, code: 'auth' });
+  const raw = String(msg || '');
+  try {
+    const d = JSON.parse(raw);
+    if (d && typeof d === 'object') return errText(d, raw);
+  } catch { /* 不是 JSON，當一般訊息處理 */ }
+  const code = e && typeof e === 'object' && typeof e.code === 'string' && e.code ? e.code : '';
+  return code ? `${code}：${raw}` : raw;
+}
+
+function sdkError(e, step) {
+  return new DataError('{label}：台新{step}失敗：{msg}', { label: LABEL, step, msg: nativeErrText(e) }, { fatal: true, code: 'auth' });
 }
 
 // 官方錯誤回傳格式 {"code","message"} → 可讀訊息
@@ -89,12 +101,12 @@ async function connect(loginPassword, certPass) {
     const registered = s.registerApiAuth(acc);
     if (!registered) authNote = 'API 認證回傳未完成';
   } catch (e) {
-    authNote = e instanceof Error ? e.message : String(e);
+    authNote = nativeErrText(e);
   }
   try {
     s.initRealtime(acc);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = nativeErrText(e);
     throw new DataError('{label}：台新{step}失敗：{msg}', { label: LABEL, step: '行情授權', msg: authNote ? `${msg}（API 認證：${authNote}）` : msg }, { fatal: true, code: 'auth' });
   }
   // 取得即時行情 Bearer token，供 WebSocket 授權使用
@@ -263,6 +275,8 @@ function toSnapshot(symbol, d, lot = 1000, tz = TW_TZ) {
     sell_price: sellPrice ?? null,
   };
 }
+
+export { tsMs, toSnapshot, errText, nativeErrText };
 
 export default {
   id: 'taishin', name: '台新證券', site: 'https://www.tssco.com.tw/', docs: 'https://ml-fugle-api.tssco.com.tw/FugleSDK/docs/trading/prepare',
