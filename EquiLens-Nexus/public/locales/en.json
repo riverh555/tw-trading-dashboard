@@ -3275,4 +3275,20 @@
  "需要其他商品資料，暫不支援": "Requires data of other symbols, not supported yet"
 ,
  "震盪": "Oscillators"
+,
+ "MACD 快線": "MACD fast"
+,
+ "MACD 慢線": "MACD slow"
+,
+ "MACD 訊號線": "MACD signal"
+,
+ "均線 {0}/{1}": "MA {0}/{1}"
+,
+ "均線快線": "MA fast"
+,
+ "均線慢線": "MA slow"
+,
+ "成交量沒有可調參數。": "Volume has no adjustable parameters."
+,
+ "成交量柱高度": "Volume bar height"
 }

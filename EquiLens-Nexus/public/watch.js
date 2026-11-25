@@ -9,6 +9,7 @@ import { initialVisibleRange } from './chart-range.js';
 
 let C = null; // { api, toast, state, redraw, page, inScope }
 const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } }, savePref = (k, v) => { try { localStorage.setItem(k, v); } catch { } };
+const biVal = (k, d) => { const n = Number(pref(`nexus.watch.${k}`, d)); return Number.isFinite(n) && n > 0 && n <= 500 ? Math.round(n) : d; };
 const PERIODS = ['1m', '3m', '5m', '15m', '60m', 'day'];
 const PERIOD_LABEL = { '1m': '1分', '3m': '3分', '5m': '5分', '15m': '15分', '60m': '60分', day: '日K' };
 const UP = '#ff3d5a', DOWN = '#16e38b', MA5C = '#f0b90b', MA20C = '#22e6ff', DIFC = '#2962ff', DEAC = '#ff6d00';
@@ -27,9 +28,10 @@ const W = {
   id: null, period: pref('nexus.watchPeriod', '5m'), group: pref('nexus.watchGroup', ''), query: '',
   board: null, data: null, error: '', lib: null, libError: '',
   showMA: pref('nexus.watchMA', '1') === '1', showVol: pref('nexus.watchVol', '1') === '1', showMACD: pref('nexus.watchMACD', '1') === '1',
+  maFast: biVal('maFast', 5), maSlow: biVal('maSlow', 20), macdFast: biVal('macdFast', 12), macdSlow: biVal('macdSlow', 26), macdSignal: biVal('macdSignal', 9), volHeight: biVal('volHeight', 80),
   chart: null, chartEl: null, chartKey: '', series: null, idxChart: null, idxChartEl: null, resizeObs: null, fitLeftPad: false,
   registry: null, studies: [], renderers: new Map(), studySeq: 0, favs: null,
-  pickerQ: '', pickerCat: 'all', pickerMode: 'list', pickerStudy: null, pickerTimer: null, studiesHTML: '',
+  pickerQ: '', pickerCat: 'all', pickerMode: 'list', pickerStudy: null, pickerBuiltin: '', pickerTimer: null, studiesHTML: '',
 };
 export function initWatch(ctx) { C = ctx; }
 
@@ -92,6 +94,7 @@ function paintWatch() {
   paintStudies();
   applyBars();
   buildIdxChart();
+  renderChartGears();
 }
 
 // ---------- 圖表 ----------
@@ -125,7 +128,7 @@ function buildMainChart() {
   const candles = chart.addSeries(lwc.CandlestickSeries, { upColor: UP, downColor: DOWN, wickUpColor: UP, wickDownColor: DOWN, borderVisible: false });
   const S = { candles };
   let nextPane = 1;
-  if (W.showVol) { try { chart.addPane(); chart.panes()[nextPane]?.setHeight(80); } catch { } S.vol = chart.addSeries(lwc.HistogramSeries, { priceFormat: { type: 'volume' } }, nextPane); nextPane++; }
+  if (W.showVol) { try { chart.addPane(); chart.panes()[nextPane]?.setHeight(W.volHeight); } catch { } S.vol = chart.addSeries(lwc.HistogramSeries, { priceFormat: { type: 'volume' } }, nextPane); nextPane++; }
   if (W.showMACD) { try { chart.addPane(); chart.panes()[nextPane]?.setHeight(110); } catch { } S.macdHist = chart.addSeries(lwc.HistogramSeries, { priceFormat: { type: 'price', precision: 2 } }, nextPane); S.macdDif = chart.addSeries(lwc.LineSeries, { color: DIFC, lineWidth: 1 }, nextPane); S.macdDea = chart.addSeries(lwc.LineSeries, { color: DEAC, lineWidth: 1 }, nextPane); nextPane++; }
   if (W.showMA) { S.ma5 = chart.addSeries(lwc.LineSeries, { color: MA5C, lineWidth: 1 }); S.ma20 = chart.addSeries(lwc.LineSeries, { color: MA20C, lineWidth: 1 }); }
   // 套用的指標：主圖的畫在第 0 格，副圖的各開一格（IndicatorRenderer 一支指標一層）
@@ -152,12 +155,12 @@ function applyBars() {
   if (!W.chart || !W.series || !W.data?.bars?.length) return;
   const { SMA, MACD } = W.lib, bars = numBars(W.data.bars), S = W.series;
   S.candles.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
-  if (S.ma5) { try { S.ma5.setData(SMA.calculate(bars, { len: 5, src: 'close' }).plots.plot0); } catch { } }
-  if (S.ma20) { try { S.ma20.setData(SMA.calculate(bars, { len: 20, src: 'close' }).plots.plot0); } catch { } }
+  if (S.ma5) { try { S.ma5.setData(SMA.calculate(bars, { len: W.maFast, src: 'close' }).plots.plot0); } catch { } }
+  if (S.ma20) { try { S.ma20.setData(SMA.calculate(bars, { len: W.maSlow, src: 'close' }).plots.plot0); } catch { } }
   if (S.vol) S.vol.setData(bars.map(b => ({ time: b.time, value: b.volume, color: b.close >= b.open ? UP : DOWN })));
   if (S.macdHist) {
     try {
-      const r = MACD.calculate(bars, { fastLength: 12, slowLength: 26, signalLength: 9 });
+      const r = MACD.calculate(bars, { fastLength: W.macdFast, slowLength: W.macdSlow, signalLength: W.macdSignal });
       S.macdHist.setData(r.plots.plot0.map(p => ({ time: p.time, value: p.value, color: p.value >= 0 ? UP : DOWN })));
       S.macdDif.setData(r.plots.plot1); S.macdDea.setData(r.plots.plot2);
     } catch { }
@@ -172,7 +175,7 @@ function applyBars() {
 }
 
 // ---------- 技術指標套用 ----------
-const chartKey = () => `${W.id}|${W.period}|${W.showMA ? 1 : 0}${W.showVol ? 1 : 0}${W.showMACD ? 1 : 0}|${W.studies.map(s => s.id).join(',')}`;
+const chartKey = () => `${W.id}|${W.period}|${W.showMA ? 1 : 0}:${W.maFast}:${W.maSlow}|${W.showVol ? 1 : 0}:${W.volHeight}|${W.showMACD ? 1 : 0}:${W.macdFast}:${W.macdSlow}:${W.macdSignal}|${W.studies.map(s => s.id).join(',')}`;
 const registryEntry = id => (W.registry || []).find(e => e.id === id) || null;
 const PERIOD_CTX = { '1m': '1', '3m': '3', '5m': '5', '15m': '15', '60m': '60', day: '1D' };
 const chartContext = () => ({ timeframe: PERIOD_CTX[W.period] || '5', timezone: 'Asia/Taipei' });
@@ -204,12 +207,36 @@ function dropStudyById(id, note) {
 // 已套用列表：名字＋設定＋移除；失敗的標出來（計算錯誤只影響該指標，不拖垮圖表）
 function paintStudies() {
   const el = document.getElementById('wv-studies'); if (!el) return;
-  const html = W.studies.map(s => {
+  const built = [];
+  if (W.showMA) built.push({ key: 'ma', name: `均線 ${W.maFast}/${W.maSlow}` });
+  if (W.showVol) built.push({ key: 'vol', name: '成交量' });
+  if (W.showMACD) built.push({ key: 'macd', name: `MACD ${W.macdFast}/${W.macdSlow}/${W.macdSignal}` });
+  const builtHTML = built.map(b => typeof b === 'string'
+    ? `<span class="wv-study">${esc(b)}</span>`
+    : `<span class="wv-study">${esc(b.name)}<button data-wbuiltin-off="${b.key}" aria-label="關閉">×</button></span>`).join('');
+  const html = builtHTML + W.studies.map(s => {
     const e = registryEntry(s.id);
     const name = e ? (e.shortName || e.name) : s.id;
-    return `<span class="wv-study${s.error ? ' failed' : ''}" title="${esc(s.error || (e ? e.name : s.id))}">${esc(name)}<button data-wstudy-settings="${s.uid}" aria-label="設定">⚙</button><button data-wstudy-remove="${s.uid}" aria-label="移除">×</button></span>`;
+    return `<span class="wv-study${s.error ? ' failed' : ''}" title="${esc(s.error || (e ? e.name : s.id))}">${esc(name)}<button data-wstudy-remove="${s.uid}" aria-label="移除">×</button></span>`;
   }).join('');
-  if (html !== W.studiesHTML) { el.innerHTML = html; W.studiesHTML = html; }
+  // 頁面重繪後 #wv-studies 是新的空節點，即使內容相同也要補回，否則已套用指標會消失
+  if (html !== W.studiesHTML || !el.children.length) { el.innerHTML = html; W.studiesHTML = html; }
+}
+// 圖表左上角的設定齒輪（TradingView 風格）：內建開關與已套用指標各一顆
+function renderChartGears() {
+  const chart = document.getElementById('wv-chart'); if (!chart) return;
+  let el = document.getElementById('wv-gears');
+  if (!el) { el = document.createElement('div'); el.className = 'wv-chart-gears'; el.id = 'wv-gears'; chart.appendChild(el); }
+  const items = [];
+  if (W.showMA) items.push('<button type="button" data-wbuiltin="ma" title="均線" aria-label="均線">⚙</button>');
+  if (W.showVol) items.push('<button type="button" data-wbuiltin="vol" title="成交量" aria-label="成交量">⚙</button>');
+  if (W.showMACD) items.push('<button type="button" data-wbuiltin="macd" title="MACD" aria-label="MACD">⚙</button>');
+  for (const s of W.studies) {
+    const e = registryEntry(s.id), name = e ? (e.shortName || e.name) : s.id;
+    items.push(`<button type="button" data-wstudy-settings="${s.uid}" title="${esc(name)}" aria-label="${esc(name)}">⚙</button>`);
+  }
+  const html = items.join('');
+  if (el.innerHTML !== html) el.innerHTML = html;
 }
 function renderStudy(study, { reuse = false } = {}) {
   const rt = W.renderers.get(study.uid);
@@ -236,6 +263,7 @@ function pickerRowHTML(e) {
 }
 function pickerHTML() {
   if (W.pickerMode === 'settings') return settingsHTML();
+  if (W.pickerMode === 'builtin') return builtinSettingsHTML();
   const { list, truncated } = pickerEntries();
   const total = (W.registry || []).length;
   return `<div class="contentpad"><div class="picker-head"><h3>技術指標</h3><button data-wclose>關閉</button></div>
@@ -321,6 +349,33 @@ function openStudySettings(uid) {
   renderPicker();
   if (!dlg.open) dlg.showModal();
 }
+// 內建開關（均線／成交量／MACD）的參數設定：齒輪打開同一个對話框，改完立即重算
+const BUILTIN_CFG = {
+  ma: [['maFast', '均線快線', 5], ['maSlow', '均線慢線', 20]],
+  vol: [['volHeight', '成交量柱高度', 80]],
+  macd: [['macdFast', 'MACD 快線', 12], ['macdSlow', 'MACD 慢線', 26], ['macdSignal', 'MACD 訊號線', 9]],
+};
+function builtinSettingsHTML() {
+  const k = W.pickerBuiltin, title = k === 'ma' ? '均線' : k === 'macd' ? 'MACD' : '成交量';
+  const rows = (BUILTIN_CFG[k] || []).map(([id, label, def]) => `<div class="ind-field"><label>${esc(label)}</label><input type="number" data-bi-input="${id}" value="${W[id] ?? def}" min="1" max="500" step="1"></div>`).join('');
+  return `<div class="contentpad"><div class="picker-head"><h3>${esc(title)} 設定</h3><button data-wclose>關閉</button></div>
+  <form id="bi-settings">${rows || '<p class="fine">成交量沒有可調參數。</p>'}</form>
+  <div class="actions"><button data-wclose>完成</button></div><p class="fine">參數變更立即重新計算。</p></div>`;
+}
+function openBuiltinSettings(key) {
+  const dlg = document.getElementById('indicator-dialog'); if (!dlg) return;
+  W.pickerMode = 'builtin'; W.pickerBuiltin = key;
+  renderPicker();
+  if (!dlg.open) dlg.showModal();
+}
+function toggleBuiltin(key) {
+  if (key === 'ma') { W.showMA = !W.showMA; savePref('nexus.watchMA', W.showMA ? '1' : '0'); if (W.showMA) dropStudyById('sma', '均線開關已開啟，已移除目錄版 SMA'); }
+  else if (key === 'vol') { W.showVol = !W.showVol; savePref('nexus.watchVol', W.showVol ? '1' : '0'); }
+  else if (key === 'macd') { W.showMACD = !W.showMACD; savePref('nexus.watchMACD', W.showMACD ? '1' : '0'); if (W.showMACD) dropStudyById('macd', 'MACD 開關已開啟，已移除目錄版 MACD'); }
+  else return;
+  W.studiesHTML = ''; paintStudies();
+  C.redraw(); syncWatchDOM();
+}
 // 加權指數當日走勢（1 分線）；沒有分時資料時退回日 K
 function indexIntradaySVG(d) {
   const M = d?.minutes, ref = d?.ref, empty = '<div class="wv-empty">尚無指數當日走勢。</div>';
@@ -384,6 +439,7 @@ async function syncWatchDOM() {
   if (!W.chart || W.chartEl !== el || W.chartKey !== key) { el.innerHTML = ''; buildMainChart(); }
   else applyBars();
   buildIdxChart();
+  renderChartGears();
 }
 
 // ---------- 事件 ----------
@@ -397,6 +453,10 @@ document.addEventListener('click', async e => {
     if (cat) { W.pickerCat = cat.dataset.wcat; renderPicker(); return; }
     const closer = e.target.closest('[data-wclose]');
     if (closer) { closePicker(); return; }
+    const biSet = e.target.closest('[data-wbuiltin]');
+    if (biSet) { openBuiltinSettings(biSet.dataset.wbuiltin); return; }
+    const biOff = e.target.closest('[data-wbuiltin-off]');
+    if (biOff) { toggleBuiltin(biOff.dataset.wbuiltinOff); return; }
   }
   const b = e.target.closest('button'); if (!b || !C || C.page() !== 'watch') return; const ds = b.dataset;
   try {
@@ -404,12 +464,7 @@ document.addEventListener('click', async e => {
     if (ds.wstudySettings) { openStudySettings(ds.wstudySettings); return; }
     if (ds.wstudyRemove) { removeStudy(ds.wstudyRemove); return; }
     if (ds.wperiod && PERIODS.includes(ds.wperiod) && ds.wperiod !== W.period) { W.period = ds.wperiod; savePref('nexus.watchPeriod', ds.wperiod); await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
-    if (ds.wtoggle) {
-      if (ds.wtoggle === 'ma') { W.showMA = !W.showMA; savePref('nexus.watchMA', W.showMA ? '1' : '0'); if (W.showMA) dropStudyById('sma', '均線開關已開啟，已移除目錄版 SMA'); }
-      if (ds.wtoggle === 'vol') { W.showVol = !W.showVol; savePref('nexus.watchVol', W.showVol ? '1' : '0'); }
-      if (ds.wtoggle === 'macd') { W.showMACD = !W.showMACD; savePref('nexus.watchMACD', W.showMACD ? '1' : '0'); if (W.showMACD) dropStudyById('macd', 'MACD 開關已開啟，已移除目錄版 MACD'); }
-      C.redraw(); await syncWatchDOM(); return;
-    }
+    if (ds.wtoggle) { toggleBuiltin(ds.wtoggle); return; }
     if (ds.wchip && ds.wchip !== W.id) { W.id = ds.wchip; await loadWatch(); C.redraw(); if (C.page() === 'watch') { paintWatch(); await syncWatchDOM(); } return; }
   } catch (err) { C.toast(err.message); }
 });
@@ -422,9 +477,16 @@ document.addEventListener('input', e => {
   if (t.id === 'wv-filter') { W.query = t.value; paintStrip(); }
   if (t.id === 'ind-search') { W.pickerQ = t.value; clearTimeout(W.pickerTimer); W.pickerTimer = setTimeout(renderPicker, 180); }
   if (t.dataset?.indInput) { clearTimeout(W.pickerTimer); W.pickerTimer = setTimeout(collectSettings, 200); }
+  if (t.dataset?.biInput) {
+    const k = t.dataset.biInput, n = Number(t.value);
+    if (Number.isFinite(n) && n > 0 && n <= 500) {
+      W[k] = Math.round(n); savePref(`nexus.watch.${k}`, String(W[k]));
+      W.studiesHTML = ''; paintStudies(); syncWatchDOM();
+    }
+  }
 });
 // 設定表單在對話框裡：Enter 不送出、不換頁
-document.addEventListener('submit', e => { if (e.target.id === 'ind-settings') e.preventDefault(); });
+document.addEventListener('submit', e => { if (e.target.id === 'ind-settings' || e.target.id === 'bi-settings') e.preventDefault(); });
 // 盤中每 3 秒更新報價／五檔／成交明細與最後一根 K 棒；自選橫條每 10 秒更新
 setInterval(async () => {
   if (!C || document.hidden || C.page() !== 'watch' || !MK.isOpen()) return;
